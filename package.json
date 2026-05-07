@@ -1,0 +1,17 @@
+{
+  "name": "arab-world-rp-bot",
+  "version": "1.0.0",
+  "description": "Discord RP bot for bank, resources, weapon purchases, and ER:LC enforcement.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/register-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "sharp": "^0.34.4"
+  }
+}
