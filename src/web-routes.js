@@ -389,7 +389,59 @@ export function registerWebsiteRoutes(app, deps) {
         robloxUsername: account.robloxUsername,
         accountNumber: account.accountNumber,
         expiresAt,
-        used: false
+        used: false,
+        deliveryStatus: "pending",
+        deliveryError: null,
+        deliveryCompletedAt: null
+      });
+
+      sendWebsiteVerificationDm(account.discordUserId, {
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0b1f3a)
+            .setTitle("Verification Code")
+            .setDescription("Login requested for Arab World. Use this code in the website to continue.")
+            .addFields(
+              { name: "Roblox Username", value: `**${account.robloxUsername || robloxUsername}**`, inline: true },
+              { name: "Account Number", value: `**${account.accountNumber}**`, inline: true },
+              { name: "Verification Code", value: `**${code}**`, inline: false },
+              { name: "Expires", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
+            )
+            .setFooter({ text: "Arab World Mobile Verification" })
+            .setTimestamp()
+        ]
+      }).then((sendResult) => {
+        const current = pendingWebsiteLoginVerifications.get(verificationId);
+        if (!current || current.used) {
+          return;
+        }
+
+        pendingWebsiteLoginVerifications.set(verificationId, {
+          ...current,
+          deliveryStatus: sendResult.ok ? "sent" : "failed",
+          deliveryError: sendResult.ok ? null : (sendResult.error || "dm_delivery_failed"),
+          deliveryCompletedAt: new Date().toISOString()
+        });
+      }).catch((error) => {
+        const current = pendingWebsiteLoginVerifications.get(verificationId);
+        if (!current || current.used) {
+          return;
+        }
+
+        pendingWebsiteLoginVerifications.set(verificationId, {
+          ...current,
+          deliveryStatus: "failed",
+          deliveryError: error?.message || "dm_delivery_failed",
+          deliveryCompletedAt: new Date().toISOString()
+        });
+      });
+
+      return res.status(202).json({
+        ok: true,
+        verificationId,
+        expiresAt,
+        maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
+        delivery: "pending"
       });
 
       const verificationEmbed = new EmbedBuilder()
@@ -529,6 +581,41 @@ export function registerWebsiteRoutes(app, deps) {
       });
     } catch (error) {
       console.error("Website mobile-verify-code fast handler failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post(["/web/showroom-request-status", "/web/mobile-request-status"], async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const verificationId = String(req.body?.verificationId || req.body?.sessionId || req.body?.requestId || "").trim();
+      if (!verificationId) {
+        return res.status(400).json({ ok: false, error: "missing_verification_id" });
+      }
+
+      const pending = pendingWebsiteLoginVerifications.get(verificationId);
+      if (!pending) {
+        return res.status(404).json({ ok: false, error: "verification_not_found" });
+      }
+
+      if (Date.now() > Number(pending.expiresAt || 0)) {
+        pendingWebsiteLoginVerifications.delete(verificationId);
+        return res.status(410).json({ ok: false, error: "verification_expired" });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        verificationId,
+        deliveryStatus: pending.deliveryStatus || "pending",
+        deliveryError: pending.deliveryError || null,
+        linkedDiscordUserId: pending.discordUserId || null,
+        accountNumber: pending.accountNumber || null
+      });
+    } catch (error) {
+      console.error("Website mobile-request-status failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
   });
