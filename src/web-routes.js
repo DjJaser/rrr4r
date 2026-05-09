@@ -1,5 +1,3 @@
-import { Routes } from "discord.js";
-
 export function registerWebsiteRoutes(app, deps) {
   const {
     client,
@@ -206,80 +204,32 @@ export function registerWebsiteRoutes(app, deps) {
     return memberUser || null;
   }
 
-  async function resolveDiscordUserForWebsiteAccess(discordUserId) {
-    const cachedUser = getCachedDiscordUser(discordUserId);
-    if (cachedUser) {
-      return { ok: true, user: cachedUser };
-    }
-
-    return {
-      ok: true,
-      user: {
-        send: async (payload) => {
-          const result = await sendWebsiteVerificationDm(discordUserId, payload);
-          if (!result.ok) {
-            throw new Error(result.error || "discord_dm_send_failed");
-          }
-        }
-      }
-    };
-  }
-
   async function sendWebsiteVerificationDm(discordUserId, payload) {
-    const cachedUser = getCachedDiscordUser(discordUserId);
-    const restEmbeds = Array.isArray(payload?.embeds)
-      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-      : [];
-
-    const attempts = [];
-
-    if (cachedUser) {
-      attempts.push(
-        withTimeout(
-          () => cachedUser.send(payload).then(() => ({ ok: true, delivery: "cache" })),
-          7000,
-          "discord_cached_dm_timeout"
-        )
-      );
+    if (!discordUserId) {
+      return { ok: false, error: "discord_user_not_found" };
     }
-
-    attempts.push(
-      withTimeout(
-        async () => {
-          const dmChannel = await client.rest.post(Routes.userChannels(), {
-            body: { recipient_id: discordUserId }
-          });
-
-          await client.rest.post(Routes.channelMessages(dmChannel.id), {
-            body: { embeds: restEmbeds }
-          });
-
-          return { ok: true, delivery: "rest" };
-        },
-        9500,
-        "discord_dm_send_timeout"
-      )
-    );
 
     try {
-      return await Promise.any(
-        attempts.map((attempt) =>
-          attempt.catch((error) => {
-            throw new Error(error?.code ? `discord_api_${error.code}` : (error?.message || "discord_dm_send_failed"));
-          })
-        )
-      );
-    } catch (aggregateError) {
-      const errors = Array.isArray(aggregateError?.errors)
-        ? aggregateError.errors.map((error) => error?.message || "discord_dm_send_failed")
-        : [];
+      const member = await findGuildMemberForWebsiteAccess(discordUserId).catch(() => null);
+      if (!member) {
+        return { ok: false, error: "not_in_guild" };
+      }
 
-      const preferredError = errors.find((error) =>
-        error
-        && error !== "discord_cached_dm_timeout"
-      ) || errors[0] || "dm_delivery_failed";
+      const user = member.user
+        || getCachedDiscordUser(discordUserId)
+        || await client.users.fetch(discordUserId).catch(() => null);
 
-      return { ok: false, error: preferredError };
+      if (!user) {
+        return { ok: false, error: "discord_user_not_found" };
+      }
+
+      await user.send(payload);
+      return { ok: true, delivery: "dm" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.code ? `discord_api_${error.code}` : "dm_delivery_failed"
+      };
     }
   }
 
@@ -368,6 +318,10 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
       }
 
+      if (!client?.isReady?.()) {
+        return res.status(503).json({ ok: false, error: "discord_client_not_ready" });
+      }
+
       const robloxUsername = extractWebsiteRobloxUsername(req.body ?? {});
       if (!robloxUsername) {
         return res.status(400).json({ ok: false, error: "missing_roblox_username" });
@@ -376,6 +330,59 @@ export function registerWebsiteRoutes(app, deps) {
       const account = findAccountByRobloxUsername(robloxUsername);
       if (!account) {
         return res.status(404).json({ ok: false, error: "account_not_found" });
+      }
+
+      {
+        const verificationId = createWebsiteVerificationId();
+        const code = createWebsiteVerificationCode();
+        const expiresAt = Date.now() + 10 * 60 * 1000;
+
+        const verificationEmbed = new EmbedBuilder()
+          .setColor(0x0b1f3a)
+          .setTitle("Verification Code")
+          .setDescription("Login requested for Arab World. Use this code in the website to continue.")
+          .addFields(
+            { name: "Roblox Username", value: `**${account.robloxUsername || robloxUsername}**`, inline: true },
+            { name: "Account Number", value: `**${account.accountNumber}**`, inline: true },
+            { name: "Verification Code", value: `**${code}**`, inline: false },
+            { name: "Expires", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
+          )
+          .setFooter({ text: "Arab World Mobile Verification" })
+          .setTimestamp();
+
+        const deliveryResult = await sendWebsiteVerificationDm(account.discordUserId, {
+          embeds: [verificationEmbed]
+        });
+
+        if (!deliveryResult.ok) {
+          return res.status(409).json({
+            ok: false,
+            error: deliveryResult.error || "dm_delivery_failed",
+            linkedDiscordUserId: account.discordUserId,
+            accountNumber: account.accountNumber
+          });
+        }
+
+        pendingWebsiteLoginVerifications.set(verificationId, {
+          verificationId,
+          code,
+          discordUserId: account.discordUserId,
+          robloxUsername: account.robloxUsername,
+          accountNumber: account.accountNumber,
+          expiresAt,
+          used: false,
+          deliveryStatus: "sent",
+          deliveryError: null,
+          deliveryCompletedAt: new Date().toISOString()
+        });
+
+        return res.status(200).json({
+          ok: true,
+          verificationId,
+          expiresAt,
+          maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
+          delivery: "dm"
+        });
       }
 
       const verificationId = createWebsiteVerificationId();
