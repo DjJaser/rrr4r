@@ -246,21 +246,6 @@ export function registerWebsiteRoutes(app, deps) {
     attempts.push(
       withTimeout(
         async () => {
-          const member = await findGuildMemberForWebsiteAccess(discordUserId);
-          if (!member?.user) {
-            throw new Error("discord_member_not_found");
-          }
-          await member.user.send(payload);
-          return { ok: true, delivery: "guild_member" };
-        },
-        5000,
-        "discord_member_dm_timeout"
-      )
-    );
-
-    attempts.push(
-      withTimeout(
-        async () => {
           const dmChannel = await client.rest.post(Routes.userChannels(), {
             body: { recipient_id: discordUserId }
           });
@@ -291,7 +276,6 @@ export function registerWebsiteRoutes(app, deps) {
 
       const preferredError = errors.find((error) =>
         error
-        && error !== "discord_member_not_found"
         && error !== "discord_cached_dm_timeout"
       ) || errors[0] || "dm_delivery_failed";
 
