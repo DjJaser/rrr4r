@@ -237,7 +237,7 @@ export function registerWebsiteRoutes(app, deps) {
       attempts.push(
         withTimeout(
           () => cachedUser.send(payload).then(() => ({ ok: true, delivery: "cache" })),
-          4500,
+          7000,
           "discord_cached_dm_timeout"
         )
       );
@@ -256,7 +256,7 @@ export function registerWebsiteRoutes(app, deps) {
 
           return { ok: true, delivery: "rest" };
         },
-        6500,
+        9500,
         "discord_dm_send_timeout"
       )
     );
