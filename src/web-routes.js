@@ -1,3 +1,5 @@
+import { Routes } from "discord.js";
+
 export function registerWebsiteRoutes(app, deps) {
   const {
     client,
@@ -212,41 +214,26 @@ export function registerWebsiteRoutes(app, deps) {
     try {
       const cachedUser = getCachedDiscordUser(discordUserId);
       if (cachedUser) {
-        await withTimeout(
-          () => cachedUser.send(payload),
-          4500,
-          "discord_cached_dm_timeout"
-        );
+        await cachedUser.send(payload);
         return { ok: true, delivery: "dm" };
       }
 
-      const guild = client?.guilds?.cache?.get?.(config.guildId) || null;
-      const cachedMember = guild?.members?.cache?.get?.(discordUserId) || null;
-      const user = cachedMember?.user || await withTimeout(
-        () => client.users.fetch(discordUserId).catch(() => null),
-        3500,
-        "discord_user_fetch_timeout"
-      ).catch((error) => {
-        if (error?.message === "discord_user_fetch_timeout") {
-          return "__timeout__";
-        }
-        return null;
+      const restEmbeds = Array.isArray(payload?.embeds)
+        ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+        : [];
+
+      const dmChannel = await client.rest.post(Routes.userChannels(), {
+        body: { recipient_id: discordUserId }
       });
 
-      if (user === "__timeout__") {
-        return { ok: false, error: "discord_user_fetch_timeout" };
-      }
+      await client.rest.post(Routes.channelMessages(dmChannel.id), {
+        body: {
+          content: payload?.content || undefined,
+          embeds: restEmbeds
+        }
+      });
 
-      if (!user) {
-        return { ok: false, error: cachedMember ? "discord_user_not_found" : "not_in_guild" };
-      }
-
-      await withTimeout(
-        () => user.send(payload),
-        4500,
-        "discord_dm_send_timeout"
-      );
-      return { ok: true, delivery: "dm" };
+      return { ok: true, delivery: "rest" };
     } catch (error) {
       return {
         ok: false,
@@ -334,7 +321,7 @@ export function registerWebsiteRoutes(app, deps) {
     return res.status(200).json({ ok: true, service: "arab-world-bot-web-api" });
   });
 
-  app.post(["/web/showroom-request-code", "/web/mobile-request-code"], async (req, res, next) => {
+  app.post(["/web/_legacy_disabled/showroom-request-code-duplicate", "/web/_legacy_disabled/mobile-request-code-duplicate"], async (req, res, next) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
@@ -682,7 +669,7 @@ export function registerWebsiteRoutes(app, deps) {
     }
   });
 
-  app.post(["/web/showroom-request-status", "/web/mobile-request-status"], async (req, res) => {
+  app.post(["/web/_legacy_disabled/showroom-request-status", "/web/_legacy_disabled/mobile-request-status"], async (req, res) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
