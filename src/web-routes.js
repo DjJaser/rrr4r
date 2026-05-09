@@ -212,27 +212,62 @@ export function registerWebsiteRoutes(app, deps) {
     try {
       const cachedUser = getCachedDiscordUser(discordUserId);
       if (cachedUser) {
-        await cachedUser.send(payload);
+        await withTimeout(
+          () => cachedUser.send(payload),
+          4500,
+          "discord_cached_dm_timeout"
+        );
         return { ok: true, delivery: "dm" };
       }
 
-      const member = await findGuildMemberForWebsiteAccess(discordUserId).catch(() => null);
+      const member = await withTimeout(
+        () => findGuildMemberForWebsiteAccess(discordUserId).catch(() => null),
+        3500,
+        "guild_member_lookup_timeout"
+      ).catch((error) => {
+        if (error?.message === "guild_member_lookup_timeout") {
+          return "__timeout__";
+        }
+        return null;
+      });
+
+      if (member === "__timeout__") {
+        return { ok: false, error: "guild_member_lookup_timeout" };
+      }
+
       if (!member) {
         return { ok: false, error: "not_in_guild" };
       }
 
-      const user = member.user || await client.users.fetch(discordUserId).catch(() => null);
+      const user = member.user || await withTimeout(
+        () => client.users.fetch(discordUserId).catch(() => null),
+        3500,
+        "discord_user_fetch_timeout"
+      ).catch((error) => {
+        if (error?.message === "discord_user_fetch_timeout") {
+          return "__timeout__";
+        }
+        return null;
+      });
+
+      if (user === "__timeout__") {
+        return { ok: false, error: "discord_user_fetch_timeout" };
+      }
 
       if (!user) {
         return { ok: false, error: "discord_user_not_found" };
       }
 
-      await user.send(payload);
+      await withTimeout(
+        () => user.send(payload),
+        4500,
+        "discord_dm_send_timeout"
+      );
       return { ok: true, delivery: "dm" };
     } catch (error) {
       return {
         ok: false,
-        error: error?.code ? `discord_api_${error.code}` : "dm_delivery_failed"
+        error: error?.message || (error?.code ? `discord_api_${error.code}` : "dm_delivery_failed")
       };
     }
   }
