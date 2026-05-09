@@ -220,26 +220,9 @@ export function registerWebsiteRoutes(app, deps) {
         return { ok: true, delivery: "dm" };
       }
 
-      const member = await withTimeout(
-        () => findGuildMemberForWebsiteAccess(discordUserId).catch(() => null),
-        3500,
-        "guild_member_lookup_timeout"
-      ).catch((error) => {
-        if (error?.message === "guild_member_lookup_timeout") {
-          return "__timeout__";
-        }
-        return null;
-      });
-
-      if (member === "__timeout__") {
-        return { ok: false, error: "guild_member_lookup_timeout" };
-      }
-
-      if (!member) {
-        return { ok: false, error: "not_in_guild" };
-      }
-
-      const user = member.user || await withTimeout(
+      const guild = client?.guilds?.cache?.get?.(config.guildId) || null;
+      const cachedMember = guild?.members?.cache?.get?.(discordUserId) || null;
+      const user = cachedMember?.user || await withTimeout(
         () => client.users.fetch(discordUserId).catch(() => null),
         3500,
         "discord_user_fetch_timeout"
@@ -255,7 +238,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (!user) {
-        return { ok: false, error: "discord_user_not_found" };
+        return { ok: false, error: cachedMember ? "discord_user_not_found" : "not_in_guild" };
       }
 
       await withTimeout(
