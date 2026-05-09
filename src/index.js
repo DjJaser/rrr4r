@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import fs from "fs";
 import {
   ActionRowBuilder,
@@ -12770,11 +12770,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
-
-
-
-
-
-
-
