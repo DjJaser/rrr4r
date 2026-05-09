@@ -350,6 +350,78 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(404).json({ ok: false, error: "account_not_found" });
       }
 
+      const verificationId = createWebsiteVerificationId();
+      const code = createWebsiteVerificationCode();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+
+      const verificationEmbed = new EmbedBuilder()
+        .setColor(0x0b1f3a)
+        .setTitle("Verification Code")
+        .setDescription("Login requested for Arab World. Use this code in the website to continue.")
+        .addFields(
+          { name: "Roblox Username", value: `**${account.robloxUsername || robloxUsername}**`, inline: true },
+          { name: "Account Number", value: `**${account.accountNumber}**`, inline: true },
+          { name: "Verification Code", value: `**${code}**`, inline: false },
+          { name: "Expires", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
+        )
+        .setFooter({ text: "Arab World Mobile Verification" })
+        .setTimestamp();
+
+      const deliveryResult = await sendWebsiteVerificationDm(account.discordUserId, {
+        embeds: [verificationEmbed]
+      });
+
+      if (!deliveryResult.ok) {
+        return res.status(409).json({
+          ok: false,
+          error: deliveryResult.error || "dm_delivery_failed",
+          linkedDiscordUserId: account.discordUserId,
+          accountNumber: account.accountNumber
+        });
+      }
+
+      pendingWebsiteLoginVerifications.set(verificationId, {
+        verificationId,
+        code,
+        discordUserId: account.discordUserId,
+        robloxUsername: account.robloxUsername,
+        accountNumber: account.accountNumber,
+        expiresAt,
+        used: false,
+        deliveryStatus: "sent",
+        deliveryError: null,
+        deliveryCompletedAt: new Date().toISOString()
+      });
+
+      return res.status(200).json({
+        ok: true,
+        verificationId,
+        expiresAt,
+        maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
+        delivery: "dm"
+      });
+    } catch (error) {
+      console.error("Website mobile-request-code primary handler failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post(["/web/showroom-request-code", "/web/mobile-request-code"], async (req, res, next) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const robloxUsername = extractWebsiteRobloxUsername(req.body ?? {});
+      if (!robloxUsername) {
+        return res.status(400).json({ ok: false, error: "missing_roblox_username" });
+      }
+
+      const account = findAccountByRobloxUsername(robloxUsername);
+      if (!account) {
+        return res.status(404).json({ ok: false, error: "account_not_found" });
+      }
+
       {
         const verificationId = createWebsiteVerificationId();
         const code = createWebsiteVerificationCode();
