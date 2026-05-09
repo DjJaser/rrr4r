@@ -210,14 +210,18 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     try {
+      const cachedUser = getCachedDiscordUser(discordUserId);
+      if (cachedUser) {
+        await cachedUser.send(payload);
+        return { ok: true, delivery: "dm" };
+      }
+
       const member = await findGuildMemberForWebsiteAccess(discordUserId).catch(() => null);
       if (!member) {
         return { ok: false, error: "not_in_guild" };
       }
 
-      const user = member.user
-        || getCachedDiscordUser(discordUserId)
-        || await client.users.fetch(discordUserId).catch(() => null);
+      const user = member.user || await client.users.fetch(discordUserId).catch(() => null);
 
       if (!user) {
         return { ok: false, error: "discord_user_not_found" };
@@ -316,10 +320,6 @@ export function registerWebsiteRoutes(app, deps) {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
-      }
-
-      if (!client?.isReady?.()) {
-        return res.status(503).json({ ok: false, error: "discord_client_not_ready" });
       }
 
       const robloxUsername = extractWebsiteRobloxUsername(req.body ?? {});
