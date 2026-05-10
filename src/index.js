@@ -8986,6 +8986,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith("website_verify_copy:")) {
+        const verificationId = interaction.customId.split(":")[1];
+        const pending = pendingWebsiteLoginVerifications.get(verificationId);
+
+        if (!pending) {
+          await interaction.reply({ content: "انتهت صلاحية هذا الرمز أو لم يعد متاحًا.", ephemeral: true });
+          return;
+        }
+
+        if (pending.discordUserId !== interaction.user.id) {
+          await interaction.reply({ content: "هذا الزر خاص بصاحب رمز التحقق فقط.", ephemeral: true });
+          return;
+        }
+
+        if (Date.now() > Number(pending.expiresAt || 0)) {
+          pendingWebsiteLoginVerifications.delete(verificationId);
+          await interaction.reply({ content: "انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا من الموقع.", ephemeral: true });
+          return;
+        }
+
+        await interaction.reply({
+          content: `رمز التحقق الخاص بك هو: \`${pending.code}\``,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId.startsWith("roblox_lookup_copy:")) {
         const token = interaction.customId.split(":")[1];
         const lookup = pendingRobloxProfileLookups.get(token);
@@ -12770,3 +12797,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
