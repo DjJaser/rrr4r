@@ -181,6 +181,12 @@ export function registerWebsiteRoutes(app, deps) {
     return String(Math.floor(100000 + Math.random() * 900000));
   }
 
+  function normalizeWebsiteVerificationCode(value) {
+    return String(value || "")
+      .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+      .replace(/\D+/g, "");
+  }
+
   function createWebsiteVerificationId() {
     return `verify_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   }
@@ -662,7 +668,9 @@ export function registerWebsiteRoutes(app, deps) {
 
       const verificationId = String(req.body?.verificationId || req.body?.sessionId || req.body?.requestId || "").trim();
       const robloxUsername = extractWebsiteRobloxUsername(req.body ?? {});
-      const code = String(req.body?.code || req.body?.verificationCode || req.body?.otp || req.body?.pin || "").trim();
+      const code = normalizeWebsiteVerificationCode(
+        req.body?.code || req.body?.verificationCode || req.body?.otp || req.body?.pin || ""
+      );
 
       if (!verificationId || !robloxUsername || !code) {
         return res.status(400).json({ ok: false, error: "missing_verification_fields" });
@@ -686,7 +694,7 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(403).json({ ok: false, error: "username_mismatch" });
       }
 
-      if (pending.code !== code) {
+      if (normalizeWebsiteVerificationCode(pending.code) !== code) {
         return res.status(403).json({ ok: false, error: "invalid_code" });
       }
 
