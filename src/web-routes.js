@@ -187,6 +187,21 @@ export function registerWebsiteRoutes(app, deps) {
       .replace(/\D+/g, "");
   }
 
+  function clearOlderWebsiteVerifications(discordUserId, robloxUsername) {
+    const normalizedUsername = String(robloxUsername || "").trim().toLowerCase();
+
+    for (const [key, pending] of pendingWebsiteLoginVerifications.entries()) {
+      const sameDiscordUser = discordUserId && pending?.discordUserId === discordUserId;
+      const sameUsername =
+        normalizedUsername
+        && String(pending?.robloxUsername || "").trim().toLowerCase() === normalizedUsername;
+
+      if (sameDiscordUser || sameUsername) {
+        pendingWebsiteLoginVerifications.delete(key);
+      }
+    }
+  }
+
   function createWebsiteVerificationId() {
     return `verify_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   }
@@ -389,6 +404,8 @@ export function registerWebsiteRoutes(app, deps) {
       if (!account) {
         return res.status(404).json({ ok: false, error: "account_not_found" });
       }
+
+      clearOlderWebsiteVerifications(account.discordUserId, account.robloxUsername || robloxUsername);
 
       const verificationId = createWebsiteVerificationId();
       const code = createWebsiteVerificationCode();
@@ -678,36 +695,82 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: "missing_verification_fields" });
       }
 
-      const pending = pendingWebsiteLoginVerifications.get(verificationId);
+      const normalizedUsername = robloxUsername.toLowerCase();
+      const now = Date.now();
+      const directPending = pendingWebsiteLoginVerifications.get(verificationId) || null;
+
+      const matchedFallbackEntry = Array.from(pendingWebsiteLoginVerifications.entries()).find(([, pending]) => {
+        if (!pending || pending.used) {
+          return false;
+        }
+
+        if (String(pending.robloxUsername || "").trim().toLowerCase() !== normalizedUsername) {
+          return false;
+        }
+
+        if (now > Number(pending.expiresAt || 0) + 15000) {
+          return false;
+        }
+
+        return normalizeWebsiteVerificationCode(pending.code) === code;
+      }) || null;
+
+      const resolvedVerificationId = matchedFallbackEntry?.[0] || verificationId;
+      const pending = matchedFallbackEntry?.[1] || directPending;
+
       if (!pending) {
+        console.warn("Website verification failed: verification_not_found", {
+          verificationId,
+          robloxUsername
+        });
         return res.status(404).json({ ok: false, error: "verification_not_found" });
       }
 
       if (pending.used) {
+        console.warn("Website verification failed: verification_already_used", {
+          verificationId: resolvedVerificationId,
+          robloxUsername
+        });
         return res.status(409).json({ ok: false, error: "verification_already_used" });
       }
 
-      if (Date.now() > Number(pending.expiresAt || 0) + 15000) {
-        pendingWebsiteLoginVerifications.delete(verificationId);
+      if (now > Number(pending.expiresAt || 0) + 15000) {
+        pendingWebsiteLoginVerifications.delete(resolvedVerificationId);
+        console.warn("Website verification failed: verification_expired", {
+          verificationId: resolvedVerificationId,
+          robloxUsername,
+          expiresAt: pending.expiresAt
+        });
         return res.status(410).json({ ok: false, error: "verification_expired" });
       }
 
-      if (String(pending.robloxUsername || "").trim().toLowerCase() !== robloxUsername.toLowerCase()) {
+      if (String(pending.robloxUsername || "").trim().toLowerCase() !== normalizedUsername) {
+        console.warn("Website verification failed: username_mismatch", {
+          verificationId: resolvedVerificationId,
+          robloxUsername,
+          pendingUsername: pending.robloxUsername
+        });
         return res.status(403).json({ ok: false, error: "username_mismatch" });
       }
 
       if (normalizeWebsiteVerificationCode(pending.code) !== code) {
+        console.warn("Website verification failed: invalid_code", {
+          verificationId: resolvedVerificationId,
+          robloxUsername,
+          enteredCode: code,
+          pendingCode: normalizeWebsiteVerificationCode(pending.code)
+        });
         return res.status(403).json({ ok: false, error: "invalid_code" });
       }
 
       const account = getAccount(pending.discordUserId);
       if (!account) {
-        pendingWebsiteLoginVerifications.delete(verificationId);
+        pendingWebsiteLoginVerifications.delete(resolvedVerificationId);
         return res.status(404).json({ ok: false, error: "account_not_found" });
       }
 
       pending.used = true;
-      pendingWebsiteLoginVerifications.set(verificationId, pending);
+      pendingWebsiteLoginVerifications.set(resolvedVerificationId, pending);
 
       return res.status(200).json({
         ok: true,
