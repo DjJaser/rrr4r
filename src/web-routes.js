@@ -392,7 +392,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       const verificationId = createWebsiteVerificationId();
       const code = createWebsiteVerificationCode();
-      const expiresAt = Date.now() + 10 * 60 * 1000;
+      const deliveryExpiresAt = Date.now() + 10 * 60 * 1000;
 
       const deliveryResult = await sendWebsiteVerificationDm(
         account.discordUserId,
@@ -401,7 +401,7 @@ export function registerWebsiteRoutes(app, deps) {
           account,
           robloxUsername,
           code,
-          expiresAt
+          expiresAt: deliveryExpiresAt
         })
       );
 
@@ -413,6 +413,8 @@ export function registerWebsiteRoutes(app, deps) {
           accountNumber: account.accountNumber
         });
       }
+
+      const expiresAt = Date.now() + 10 * 60 * 1000;
 
       pendingWebsiteLoginVerifications.set(verificationId, {
         verificationId,
@@ -685,7 +687,7 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(409).json({ ok: false, error: "verification_already_used" });
       }
 
-      if (Date.now() > Number(pending.expiresAt || 0)) {
+      if (Date.now() > Number(pending.expiresAt || 0) + 15000) {
         pendingWebsiteLoginVerifications.delete(verificationId);
         return res.status(410).json({ ok: false, error: "verification_expired" });
       }
