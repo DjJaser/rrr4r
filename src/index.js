@@ -1702,10 +1702,13 @@ async function processWebsiteCarPurchase({
   registerVehicleName(cleanVehicleName);
   invalidateVehicleCatalogCache();
   const offer = getVehicleOffer(cleanVehicleName);
-  const fallbackPrice = offer.isFree ? 0 : Number(offer.price || 0);
-  const finalPrice = Number.isFinite(Number(requestedPrice)) && Number(requestedPrice) >= 0
+  const catalogPrice = offer.isFree ? 0 : Number(offer.price || 0);
+  const fallbackRequestedPrice = Number.isFinite(Number(requestedPrice)) && Number(requestedPrice) >= 0
     ? Number(requestedPrice)
-    : fallbackPrice;
+    : null;
+  const finalPrice = Number.isFinite(catalogPrice) && catalogPrice >= 0
+    ? catalogPrice
+    : (fallbackRequestedPrice ?? 0);
 
   if (finalPrice < 0) {
     return { ok: false, error: "invalid_price" };
@@ -12797,4 +12800,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
