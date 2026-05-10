@@ -1,4 +1,4 @@
-import { Routes } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Routes } from "discord.js";
 
 export function registerWebsiteRoutes(app, deps) {
   const {
@@ -206,6 +206,41 @@ export function registerWebsiteRoutes(app, deps) {
     return memberUser || null;
   }
 
+  function buildWebsiteVerificationDmPayload({ verificationId, account, robloxUsername, code, expiresAt }) {
+    const safeUsername = account?.robloxUsername || robloxUsername || "غير معروف";
+    const safeAccountNumber = account?.accountNumber || "غير متوفر";
+
+    return {
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0b1f3a)
+          .setTitle("بوابة عرب وورلد | رمز التحقق")
+          .setDescription(
+            [
+              "تم طلب تسجيل دخول جديد إلى موقع عرب وورلد.",
+              "استخدم رمز التحقق أدناه لإكمال الدخول بأمان."
+            ].join("\n")
+          )
+          .addFields(
+            { name: "يوزر روبلوكس", value: `**${safeUsername}**`, inline: true },
+            { name: "رقم الحساب", value: `**${safeAccountNumber}**`, inline: true },
+            { name: "رمز التحقق", value: `\`${code}\``, inline: false },
+            { name: "صلاحية الرمز", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
+          )
+          .setFooter({ text: "Arab World Mobile Verification" })
+          .setTimestamp()
+      ],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`website_verify_copy:${verificationId}`)
+            .setLabel("نسخ الرمز")
+            .setStyle(ButtonStyle.Secondary)
+        )
+      ]
+    };
+  }
+
   async function sendWebsiteVerificationDm(discordUserId, payload) {
     if (!discordUserId) {
       return { ok: false, error: "discord_user_not_found" };
@@ -353,22 +388,16 @@ export function registerWebsiteRoutes(app, deps) {
       const code = createWebsiteVerificationCode();
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
-      const verificationEmbed = new EmbedBuilder()
-        .setColor(0x0b1f3a)
-        .setTitle("Verification Code")
-        .setDescription("Login requested for Arab World. Use this code in the website to continue.")
-        .addFields(
-          { name: "Roblox Username", value: `**${account.robloxUsername || robloxUsername}**`, inline: true },
-          { name: "Account Number", value: `**${account.accountNumber}**`, inline: true },
-          { name: "Verification Code", value: `**${code}**`, inline: false },
-          { name: "Expires", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
-        )
-        .setFooter({ text: "Arab World Mobile Verification" })
-        .setTimestamp();
-
-      const deliveryResult = await sendWebsiteVerificationDm(account.discordUserId, {
-        embeds: [verificationEmbed]
-      });
+      const deliveryResult = await sendWebsiteVerificationDm(
+        account.discordUserId,
+        buildWebsiteVerificationDmPayload({
+          verificationId,
+          account,
+          robloxUsername,
+          code,
+          expiresAt
+        })
+      );
 
       if (!deliveryResult.ok) {
         return res.status(409).json({
