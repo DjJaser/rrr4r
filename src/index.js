@@ -1724,23 +1724,27 @@ async function processWebsiteCarPurchase({
 
   const beforeBalance = Number(account.balance || 0);
   const vehicleToStore = offer.name || cleanVehicleName;
+  const normalizedVehicleKey = normalizeVehicleName(vehicleToStore);
   const updated = updateAccount(account.discordUserId, (current) => {
     current.balance -= finalPrice;
+    current.cars ??= {};
+    current.cars[normalizedVehicleKey] = {
+      name: vehicleToStore,
+      purchasedAt: new Date().toISOString(),
+      purchasePrice: finalPrice,
+      grantedBy: "website",
+      source: sourceLabel
+    };
     return current;
   });
-  const storedVehicle = addOwnedVehicle(account.discordUserId, vehicleToStore, {
-    purchasePrice: finalPrice,
-    grantedBy: "website",
-    source: sourceLabel
-  });
   const afterAccount = getAccount(account.discordUserId);
-  const vehicleStoredSuccessfully = Boolean(storedVehicle) && (
+  const vehicleStoredSuccessfully = Boolean(updated?.cars?.[normalizedVehicleKey]) && (
     afterAccount?.discordUserId
       ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore)
       : false
   );
 
-  if (!updated || !storedVehicle || !afterAccount || !vehicleStoredSuccessfully) {
+  if (!updated || !afterAccount || !vehicleStoredSuccessfully) {
     if (updated) {
       updateAccount(account.discordUserId, (current) => {
         current.balance += finalPrice;
@@ -1755,7 +1759,7 @@ async function processWebsiteCarPurchase({
       cleanVehicleName,
       vehicleToStore,
       updatedBalanceAfterDebit: Number(updated?.balance || 0),
-      storedVehicleName: storedVehicle?.name || "",
+      storedVehicleName: updated?.cars?.[normalizedVehicleKey]?.name || "",
       afterAccountHasVehicle: afterAccount?.discordUserId ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore) : false
     }));
     return { ok: false, error: "vehicle_store_failed" };
@@ -1827,10 +1831,10 @@ async function processWebsiteCarSale({
   }
 
   const latestOffer = getVehicleOffer(carRecord.name);
-  const fallbackRefund = Math.floor((latestOffer.price > 0 ? latestOffer.price : carRecord.purchasePrice || 0) * 0.5);
-  const refundAmount = Number.isFinite(Number(requestedAmount)) && Number(requestedAmount) >= 0
-    ? Math.floor(Number(requestedAmount))
-    : fallbackRefund;
+  const saleBasePrice = latestOffer.price > 0
+    ? Number(latestOffer.price || 0)
+    : Number(carRecord.purchasePrice || 0);
+  const refundAmount = Math.floor(Math.max(0, saleBasePrice) * 0.5);
 
   if (refundAmount < 0) {
     return { ok: false, error: "invalid_price" };
@@ -12800,3 +12804,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
