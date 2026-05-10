@@ -4134,7 +4134,7 @@ async function ensureBudgetPermission(interaction, budgetKey, action = "manage")
   }
 
   const definition = getBudgetDefinition(budgetKey);
-  await interaction.reply({
+  await safelyReply(interaction, {
     embeds: [
       buildPrivateNoticeEmbed({
         title: "⛔ لا تملك الصلاحية",
@@ -8641,9 +8641,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await interaction.reply({
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
+
+        await interaction.editReply({
           embeds: [buildBudgetLogsEmbed(getBudgetDefinition(budgetKey), listBudgetTransactions(budgetKey))],
-          ephemeral: true
         });
         return;
       }
@@ -9054,12 +9058,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const [action, requestId] = interaction.customId.split(":");
         const draft = pendingActivationDrafts.get(requestId);
         if (!draft) {
-          await interaction.reply({ content: "انتهت صلاحية تأكيد الطلب أو لم يعد موجودًا.", ephemeral: true });
+          await safelyReply(interaction, { content: "انتهت صلاحية تأكيد الطلب أو لم يعد موجودًا.", ephemeral: true });
           return;
         }
 
         if (draft.applicantUserId !== interaction.user.id) {
-          await interaction.reply({ content: "هذا التأكيد خاص بصاحب الطلب فقط.", ephemeral: true });
+          await safelyReply(interaction, { content: "هذا التأكيد خاص بصاحب الطلب فقط.", ephemeral: true });
           return;
         }
 
@@ -9079,12 +9083,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        const deferred = await safelyDeferUpdate(interaction);
+        if (!deferred) {
+          return;
+        }
+
         pendingActivationRequests.set(requestId, draft);
         const reviewChannel = await client.channels.fetch(ACTIVATION_REVIEW_CHANNEL_ID).catch(() => null);
         if (!reviewChannel?.isTextBased?.()) {
           pendingActivationRequests.delete(requestId);
           pendingActivationDrafts.delete(requestId);
-          await interaction.reply({ content: "تعذر العثور على روم مراجعة التفعيل.", ephemeral: true });
+          await interaction.followUp({ content: "تعذر العثور على روم مراجعة التفعيل.", ephemeral: true }).catch(() => null);
           return;
         }
 
@@ -9099,7 +9108,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }).catch(() => null);
 
         pendingActivationDrafts.delete(requestId);
-        await interaction.update({
+        await interaction.editReply({
           embeds: [
             new EmbedBuilder()
               .setColor(0x0b1f3a)
@@ -9120,32 +9129,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.customId.startsWith("activation_accept:") || interaction.customId.startsWith("activation_reject:")) {
         if (!canUseSlashCommands(interaction.member)) {
-          await interaction.reply({ content: `هذا الزر متاح فقط لمن يملك الرتبة <@&${config.slashAccessRoleId}>.`, ephemeral: true });
+          await safelyReply(interaction, { content: `هذا الزر متاح فقط لمن يملك الرتبة <@&${config.slashAccessRoleId}>.`, ephemeral: true });
           return;
         }
 
         const [action, requestId] = interaction.customId.split(":");
         const request = pendingActivationRequests.get(requestId);
         if (!request) {
-          await interaction.reply({ content: "انتهت صلاحية طلب التفعيل أو لم يعد موجودًا.", ephemeral: true });
+          await safelyReply(interaction, { content: "انتهت صلاحية طلب التفعيل أو لم يعد موجودًا.", ephemeral: true });
+          return;
+        }
+
+        const deferred = await safelyDeferUpdate(interaction);
+        if (!deferred) {
           return;
         }
 
         const guildMember = await interaction.guild?.members.fetch(request.applicantUserId).catch(() => null);
         if (!guildMember) {
-          await interaction.reply({ content: "تعذر العثور على مقدم الطلب داخل السيرفر.", ephemeral: true });
+          await interaction.followUp({ content: "تعذر العثور على مقدم الطلب داخل السيرفر.", ephemeral: true }).catch(() => null);
           return;
         }
 
         if (action === "activation_accept") {
           if (guildMember.roles.cache.has(ACTIVATION_ROLE_ID)) {
-            await interaction.reply({ content: "هذا الشخص مفعّل بالفعل، ولن يتم تنفيذ أي شيء جديد.", ephemeral: true });
+            await interaction.followUp({ content: "هذا الشخص مفعّل بالفعل، ولن يتم تنفيذ أي شيء جديد.", ephemeral: true }).catch(() => null);
             return;
           }
 
           await guildMember.roles.add(ACTIVATION_ROLE_ID).catch(() => null);
           await guildMember.setNickname(`AW | ${request.robloxUsername}`.slice(0, 32)).catch(() => null);
-          await interaction.update({
+          await interaction.editReply({
             embeds: [buildActivationAcceptedEmbed({
               reviewerId: interaction.user.id,
               applicantId: request.applicantUserId,
@@ -9167,7 +9181,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await interaction.update({
+        await interaction.editReply({
           embeds: [buildActivationRejectedEmbed({
             reviewerId: interaction.user.id,
             applicantId: request.applicantUserId,
@@ -9222,9 +9236,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await interaction.reply({
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
+
+        await interaction.editReply({
           embeds: [buildBudgetLogsEmbed(getBudgetDefinition(budgetKey), listBudgetTransactions(budgetKey))],
-          ephemeral: true
         });
         return;
       }
@@ -12804,4 +12822,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
