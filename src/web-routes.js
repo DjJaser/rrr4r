@@ -214,7 +214,11 @@ export function registerWebsiteRoutes(app, deps) {
     try {
       const cachedUser = getCachedDiscordUser(discordUserId);
       if (cachedUser) {
-        await cachedUser.send(payload);
+        await withTimeout(
+          () => cachedUser.send(payload),
+          6000,
+          "discord_cached_dm_timeout"
+        );
         return { ok: true, delivery: "dm" };
       }
 
@@ -222,16 +226,24 @@ export function registerWebsiteRoutes(app, deps) {
         ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
         : [];
 
-      const dmChannel = await client.rest.post(Routes.userChannels(), {
-        body: { recipient_id: discordUserId }
-      });
+      const dmChannel = await withTimeout(
+        () => client.rest.post(Routes.userChannels(), {
+          body: { recipient_id: discordUserId }
+        }),
+        6000,
+        "discord_dm_channel_timeout"
+      );
 
-      await client.rest.post(Routes.channelMessages(dmChannel.id), {
-        body: {
-          content: payload?.content || undefined,
-          embeds: restEmbeds
-        }
-      });
+      await withTimeout(
+        () => client.rest.post(Routes.channelMessages(dmChannel.id), {
+          body: {
+            content: payload?.content || undefined,
+            embeds: restEmbeds
+          }
+        }),
+        6000,
+        "discord_dm_send_timeout"
+      );
 
       return { ok: true, delivery: "rest" };
     } catch (error) {
@@ -321,7 +333,7 @@ export function registerWebsiteRoutes(app, deps) {
     return res.status(200).json({ ok: true, service: "arab-world-bot-web-api" });
   });
 
-  app.post(["/web/_legacy_disabled/showroom-request-code-duplicate", "/web/_legacy_disabled/mobile-request-code-duplicate"], async (req, res, next) => {
+  app.post(["/web/showroom-request-code", "/web/mobile-request-code"], async (req, res, next) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
@@ -393,7 +405,7 @@ export function registerWebsiteRoutes(app, deps) {
     }
   });
 
-  app.post(["/web/showroom-request-code", "/web/mobile-request-code"], async (req, res, next) => {
+  app.post(["/web/_legacy_disabled/showroom-request-code", "/web/_legacy_disabled/mobile-request-code"], async (req, res, next) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
