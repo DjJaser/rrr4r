@@ -189,14 +189,29 @@ export function registerWebsiteRoutes(app, deps) {
 
   function clearOlderWebsiteVerifications(discordUserId, robloxUsername) {
     const normalizedUsername = String(robloxUsername || "").trim().toLowerCase();
+    const now = Date.now();
+    const staleUsedWindowMs = 30 * 60 * 1000;
 
     for (const [key, pending] of pendingWebsiteLoginVerifications.entries()) {
+      if (!pending) {
+        pendingWebsiteLoginVerifications.delete(key);
+        continue;
+      }
+
       const sameDiscordUser = discordUserId && pending?.discordUserId === discordUserId;
       const sameUsername =
         normalizedUsername
         && String(pending?.robloxUsername || "").trim().toLowerCase() === normalizedUsername;
 
-      if (sameDiscordUser || sameUsername) {
+      if (!sameDiscordUser && !sameUsername) {
+        continue;
+      }
+
+      const expired = now > Number(pending.expiresAt || 0) + 60 * 1000;
+      const usedAtTime = pending.usedAt ? new Date(pending.usedAt).getTime() : 0;
+      const staleUsed = Boolean(pending.used) && usedAtTime > 0 && now - usedAtTime > staleUsedWindowMs;
+
+      if (expired || staleUsed) {
         pendingWebsiteLoginVerifications.delete(key);
       }
     }
@@ -691,32 +706,68 @@ export function registerWebsiteRoutes(app, deps) {
         req.body?.code || req.body?.verificationCode || req.body?.otp || req.body?.pin || ""
       );
 
-      if (!verificationId || !robloxUsername || !code) {
+      if (!robloxUsername || !code) {
         return res.status(400).json({ ok: false, error: "missing_verification_fields" });
       }
 
       const normalizedUsername = robloxUsername.toLowerCase();
       const now = Date.now();
-      const directPending = pendingWebsiteLoginVerifications.get(verificationId) || null;
+      const recentReuseWindowMs = 2 * 60 * 1000;
+      const directPending = verificationId
+        ? (pendingWebsiteLoginVerifications.get(verificationId) || null)
+        : null;
 
-      const matchedFallbackEntry = Array.from(pendingWebsiteLoginVerifications.entries()).find(([, pending]) => {
-        if (!pending) {
-          return false;
-        }
+      const matchingEntries = Array.from(pendingWebsiteLoginVerifications.entries())
+        .map(([entryId, pending]) => {
+          if (!pending) {
+            return null;
+          }
 
-        if (String(pending.robloxUsername || "").trim().toLowerCase() !== normalizedUsername) {
-          return false;
-        }
+          const sameUsername =
+            String(pending.robloxUsername || "").trim().toLowerCase() === normalizedUsername;
+          const sameCode = normalizeWebsiteVerificationCode(pending.code) === code;
+          if (!sameUsername || !sameCode) {
+            return null;
+          }
 
-        if (now > Number(pending.expiresAt || 0) + 15000) {
-          return false;
-        }
+          const expiresAt = Number(pending.expiresAt || 0);
+          const expired = now > expiresAt + 15000;
+          const usedAtTime = pending.usedAt ? new Date(pending.usedAt).getTime() : 0;
+          const usedRecently = Boolean(pending.used) && usedAtTime > 0 && now - usedAtTime <= recentReuseWindowMs;
+          const freshness = pending.deliveryCompletedAt
+            ? new Date(pending.deliveryCompletedAt).getTime()
+            : expiresAt;
 
-        return normalizeWebsiteVerificationCode(pending.code) === code;
-      }) || null;
+          return {
+            entryId,
+            pending,
+            expired,
+            usedRecently,
+            freshness
+          };
+        })
+        .filter(Boolean)
+        .filter((entry) => !entry.expired && (!entry.pending.used || entry.usedRecently))
+        .sort((left, right) => {
+          const leftExact = verificationId && left.entryId === verificationId ? 1 : 0;
+          const rightExact = verificationId && right.entryId === verificationId ? 1 : 0;
+          if (leftExact !== rightExact) {
+            return rightExact - leftExact;
+          }
 
-      const resolvedVerificationId = matchedFallbackEntry?.[0] || verificationId;
-      const pending = matchedFallbackEntry?.[1] || directPending;
+          const leftUnused = left.pending.used ? 0 : 1;
+          const rightUnused = right.pending.used ? 0 : 1;
+          if (leftUnused !== rightUnused) {
+            return rightUnused - leftUnused;
+          }
+
+          return right.freshness - left.freshness;
+        });
+
+      const matchedFallbackEntry = matchingEntries[0] || null;
+
+      const resolvedVerificationId = matchedFallbackEntry?.entryId || verificationId;
+      const pending = matchedFallbackEntry?.pending || directPending;
 
       if (!pending) {
         console.warn("Website verification failed: verification_not_found", {
@@ -727,7 +778,6 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (pending.used) {
-        const recentReuseWindowMs = 2 * 60 * 1000;
         const normalizedPendingUsername = String(pending.robloxUsername || "").trim().toLowerCase();
         const normalizedPendingCode = normalizeWebsiteVerificationCode(pending.code);
         const usedAtTime = pending.usedAt ? new Date(pending.usedAt).getTime() : 0;
