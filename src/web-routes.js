@@ -700,7 +700,7 @@ export function registerWebsiteRoutes(app, deps) {
       const directPending = pendingWebsiteLoginVerifications.get(verificationId) || null;
 
       const matchedFallbackEntry = Array.from(pendingWebsiteLoginVerifications.entries()).find(([, pending]) => {
-        if (!pending || pending.used) {
+        if (!pending) {
           return false;
         }
 
