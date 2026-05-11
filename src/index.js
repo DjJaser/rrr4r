@@ -157,6 +157,7 @@ import {
   addOwnedVehicle,
   applyBudgetTransaction,
   applyWeeklyBudgetAllowances,
+  appendTransactionToStore,
   appendProjectTransaction,
   consumeTransfer,
   createFine,
@@ -192,7 +193,9 @@ import {
   resolveRegisteredVehicleName,
   setVehiclePrice,
   getProject,
+  getMutableAccount,
   upsertProject,
+  mutateStore,
   updateFine,
   updateHoldRequest,
   updateAccount,
@@ -1614,46 +1617,66 @@ async function processWebsiteBankTransfer({
     return { ok: false, error: "insufficient_balance" };
   }
 
-  updateAccount(senderAccount.discordUserId, (current) => {
-    current.balance -= numericAmount;
-    return current;
-  });
+  const transferCommit = mutateStore((store) => {
+    const mutableSender = getMutableAccount(store, senderAccount.discordUserId);
+    const mutableTarget = getMutableAccount(store, targetAccount.discordUserId);
 
-  updateAccount(targetAccount.discordUserId, (current) => {
-    current.balance += numericAmount;
-    return current;
-  });
-
-  const senderAfter = getAccount(senderAccount.discordUserId);
-  const targetAfter = getAccount(targetAccount.discordUserId);
-
-  appendTransaction({
-    discordUserId: senderAccount.discordUserId,
-    robloxUsername: senderAfter.robloxUsername,
-    type: "website_transfer_sent",
-    amount: numericAmount,
-    direction: "debit",
-    balanceAfter: senderAfter.balance,
-    metadata: {
-      targetUserId: targetAccount.discordUserId,
-      targetAccountNumber: targetAccount.accountNumber,
-      source: sourceLabel
+    if (!mutableSender || !mutableTarget) {
+      return { ok: false, error: "account_not_found" };
     }
+
+    if (isAccountBankFrozen(mutableSender) || isAccountBankFrozen(mutableTarget)) {
+      return { ok: false, error: "account_frozen" };
+    }
+
+    if (Number(mutableSender.balance || 0) < numericAmount) {
+      return { ok: false, error: "insufficient_balance" };
+    }
+
+    mutableSender.balance -= numericAmount;
+    mutableTarget.balance += numericAmount;
+
+    appendTransactionToStore(store, {
+      discordUserId: mutableSender.discordUserId,
+      robloxUsername: mutableSender.robloxUsername,
+      type: "website_transfer_sent",
+      amount: numericAmount,
+      direction: "debit",
+      balanceAfter: mutableSender.balance,
+      metadata: {
+        targetUserId: mutableTarget.discordUserId,
+        targetAccountNumber: mutableTarget.accountNumber,
+        source: sourceLabel
+      }
+    });
+
+    appendTransactionToStore(store, {
+      discordUserId: mutableTarget.discordUserId,
+      robloxUsername: mutableTarget.robloxUsername,
+      type: "website_transfer_received",
+      amount: numericAmount,
+      direction: "credit",
+      balanceAfter: mutableTarget.balance,
+      metadata: {
+        sourceUserId: mutableSender.discordUserId,
+        sourceAccountNumber: mutableSender.accountNumber,
+        source: sourceLabel
+      }
+    });
+
+    return {
+      ok: true,
+      senderAfter: structuredClone(mutableSender),
+      targetAfter: structuredClone(mutableTarget)
+    };
   });
 
-  appendTransaction({
-    discordUserId: targetAccount.discordUserId,
-    robloxUsername: targetAfter.robloxUsername,
-    type: "website_transfer_received",
-    amount: numericAmount,
-    direction: "credit",
-    balanceAfter: targetAfter.balance,
-    metadata: {
-      sourceUserId: senderAccount.discordUserId,
-      sourceAccountNumber: senderAccount.accountNumber,
-      source: sourceLabel
-    }
-  });
+  if (!transferCommit?.ok) {
+    return transferCommit ?? { ok: false, error: "transfer_commit_failed" };
+  }
+
+  const senderAfter = transferCommit.senderAfter;
+  const targetAfter = transferCommit.targetAfter;
 
   await sendAuditLog(client, config.auditChannelId, {
     title: "🌐 **تحويل بنكي من الموقع**",
@@ -1773,7 +1796,16 @@ async function processWebsiteCarPurchase({
   const beforeBalance = Number(account.balance || 0);
   const vehicleToStore = offer.name || cleanVehicleName;
   const normalizedVehicleKey = normalizeVehicleName(vehicleToStore);
-  const updated = updateAccount(account.discordUserId, (current) => {
+  const purchaseCommit = mutateStore((store) => {
+    const current = getMutableAccount(store, account.discordUserId);
+    if (!current) {
+      return { ok: false, error: "account_not_found" };
+    }
+
+    if (Number(current.balance || 0) < finalPrice) {
+      return { ok: false, error: "insufficient_balance" };
+    }
+
     current.balance -= finalPrice;
     current.cars ??= {};
     current.cars[normalizedVehicleKey] = {
@@ -1783,47 +1815,45 @@ async function processWebsiteCarPurchase({
       grantedBy: "website",
       source: sourceLabel
     };
-    return current;
+
+    appendTransactionToStore(store, {
+      discordUserId: current.discordUserId,
+      robloxUsername: current.robloxUsername,
+      type: "website_vehicle_purchase",
+      amount: finalPrice,
+      direction: finalPrice > 0 ? "debit" : "none",
+      balanceAfter: current.balance,
+      metadata: {
+        vehicleName: vehicleToStore,
+        source: sourceLabel
+      }
+    });
+
+    return {
+      ok: true,
+      afterAccount: structuredClone(current)
+    };
   });
-  const afterAccount = getAccount(account.discordUserId);
-  const vehicleStoredSuccessfully = Boolean(updated?.cars?.[normalizedVehicleKey]) && (
+
+  const afterAccount = purchaseCommit?.afterAccount ?? null;
+  const vehicleStoredSuccessfully = Boolean(afterAccount?.cars?.[normalizedVehicleKey]) && (
     afterAccount?.discordUserId
       ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore)
       : false
   );
 
-  if (!updated || !afterAccount || !vehicleStoredSuccessfully) {
-    if (updated) {
-      updateAccount(account.discordUserId, (current) => {
-        current.balance += finalPrice;
-        current.cars ??= {};
-        delete current.cars[normalizeVehicleName(vehicleToStore)];
-        return current;
-      });
-    }
+  if (!purchaseCommit?.ok || !afterAccount || !vehicleStoredSuccessfully) {
     console.error("[WEBSITE BUY CAR STORE FAILED]", JSON.stringify({
       discordUserId: account.discordUserId,
       requestedVehicleName: vehicleName,
       cleanVehicleName,
       vehicleToStore,
-      updatedBalanceAfterDebit: Number(updated?.balance || 0),
-      storedVehicleName: updated?.cars?.[normalizedVehicleKey]?.name || "",
+      updatedBalanceAfterDebit: Number(afterAccount?.balance || 0),
+      storedVehicleName: afterAccount?.cars?.[normalizedVehicleKey]?.name || "",
       afterAccountHasVehicle: afterAccount?.discordUserId ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore) : false
     }));
-    return { ok: false, error: "vehicle_store_failed" };
+    return purchaseCommit?.ok === false ? purchaseCommit : { ok: false, error: "vehicle_store_failed" };
   }
-  appendTransaction({
-    discordUserId: account.discordUserId,
-    robloxUsername: afterAccount.robloxUsername,
-    type: "website_vehicle_purchase",
-    amount: finalPrice,
-    direction: finalPrice > 0 ? "debit" : "none",
-    balanceAfter: afterAccount.balance,
-    metadata: {
-      vehicleName: vehicleToStore,
-      source: sourceLabel
-    }
-  });
 
   await sendAuditLog(client, config.auditChannelId, {
     title: "🌐 **شراء مركبة من الموقع**",
@@ -1889,29 +1919,39 @@ async function processWebsiteCarSale({
   }
 
   const beforeBalance = Number(account.balance || 0);
-  const updated = updateAccount(account.discordUserId, (current) => {
+  const saleCommit = mutateStore((store) => {
+    const current = getMutableAccount(store, account.discordUserId);
+    if (!current) {
+      return { ok: false, error: "account_not_found" };
+    }
+
     current.cars ??= {};
     delete current.cars[normalizeVehicleName(carRecord.name)];
     current.balance += refundAmount;
-    return current;
-  });
-  const afterAccount = updated ? getAccount(account.discordUserId) : null;
-  if (!afterAccount) {
-    return { ok: false, error: "account_not_found" };
-  }
 
-  appendTransaction({
-    discordUserId: account.discordUserId,
-    robloxUsername: afterAccount.robloxUsername,
-    type: "website_vehicle_sale",
-    amount: refundAmount,
-    direction: refundAmount > 0 ? "credit" : "none",
-    balanceAfter: afterAccount.balance,
-    metadata: {
-      vehicleName: carRecord.name,
-      source: sourceLabel
-    }
+    appendTransactionToStore(store, {
+      discordUserId: account.discordUserId,
+      robloxUsername: current.robloxUsername,
+      type: "website_vehicle_sale",
+      amount: refundAmount,
+      direction: refundAmount > 0 ? "credit" : "none",
+      balanceAfter: current.balance,
+      metadata: {
+        vehicleName: carRecord.name,
+        source: sourceLabel
+      }
+    });
+
+    return {
+      ok: true,
+      afterAccount: structuredClone(current)
+    };
   });
+
+  const afterAccount = saleCommit?.afterAccount ?? null;
+  if (!saleCommit?.ok || !afterAccount) {
+    return saleCommit?.ok === false ? saleCommit : { ok: false, error: "account_not_found" };
+  }
 
   await sendAuditLog(client, config.auditChannelId, {
     title: "🌐 **بيع مركبة من الموقع**",
@@ -3668,7 +3708,7 @@ function createApplyHoldModal() {
     .setCustomId("modal_apply_hold")
     .setTitle("إيقاف خدمات")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("hold_target").setLabel("اسم الشخص أو ايدي الدسكورد").setStyle(TextInputStyle.Short).setRequired(true))
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("hold_target").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true))
     );
 }
 
@@ -3677,7 +3717,7 @@ function createAdminRemoveHoldModal() {
     .setCustomId("modal_admin_remove_hold")
     .setTitle("رفع إيقاف الخدمات")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("hold_target").setLabel("اسم الشخص أو ايدي الدسكورد").setStyle(TextInputStyle.Short).setRequired(true))
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("hold_target").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true))
     );
 }
 
@@ -3686,7 +3726,7 @@ function createPoliceBankWithdrawModal() {
     .setCustomId("modal_police_bank_withdraw")
     .setTitle("سحب مال شخص")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("ايدي الشخص أو اسمه البنكي").setStyle(TextInputStyle.Short).setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("amount").setLabel("المبلغ").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("السبب").setStyle(TextInputStyle.Paragraph).setRequired(true))
     );
@@ -3697,7 +3737,7 @@ function createPoliceBankFreezeModal() {
     .setCustomId("modal_police_bank_freeze")
     .setTitle("تجميد حساب بنكي")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("ايدي الشخص أو اسمه البنكي").setStyle(TextInputStyle.Short).setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("سبب التجميد").setStyle(TextInputStyle.Paragraph).setRequired(true))
     );
 }
@@ -3707,7 +3747,7 @@ function createPoliceBankUnfreezeModal() {
     .setCustomId("modal_police_bank_unfreeze")
     .setTitle("رفع تجميد حساب")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("ايدي الشخص أو اسمه البنكي").setStyle(TextInputStyle.Short).setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("ملاحظة الرفع").setStyle(TextInputStyle.Paragraph).setRequired(true))
     );
 }
@@ -3717,7 +3757,7 @@ function createPoliceBankSeizeAssetsModal() {
     .setCustomId("modal_police_bank_seize_assets")
     .setTitle("حجز ممتلكات")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("ايدي الشخص أو اسمه البنكي").setStyle(TextInputStyle.Short).setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("سبب الحجز").setStyle(TextInputStyle.Paragraph).setRequired(true))
     );
 }
@@ -3727,7 +3767,7 @@ function createPoliceBankReleaseAssetsModal() {
     .setCustomId("modal_police_bank_release_assets")
     .setTitle("رفع حجز ممتلكات")
     .addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("ايدي الشخص أو اسمه البنكي").setStyle(TextInputStyle.Short).setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user").setLabel("منشن الشخص أو آيدي الديسكورد أو رقم الحساب").setStyle(TextInputStyle.Short).setRequired(true)),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("ملاحظة الرفع").setStyle(TextInputStyle.Paragraph).setRequired(true))
     );
 }
@@ -3845,6 +3885,294 @@ async function resolveUser(raw) {
   }
 
   return null;
+}
+
+async function resolveAdministrativeTargetUser(raw) {
+  const cleaned = String(raw || "").trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  const mentionMatch = cleaned.match(/^<@!?(\d{5,})>$/);
+  const discordId = mentionMatch?.[1] || (parseUserInput(cleaned).match(/^\d{5,}$/) ? parseUserInput(cleaned) : "");
+  if (discordId) {
+    return client.users.fetch(discordId).catch(() => null);
+  }
+
+  if (/^\d{4,6}$/.test(cleaned)) {
+    const accountByNumber = findAccountByAccountNumber(cleaned);
+    if (accountByNumber?.discordUserId) {
+      return client.users.fetch(accountByNumber.discordUserId).catch(() => null);
+    }
+  }
+
+  return null;
+}
+
+function hasValidAdministrativeActionContext({ actorUserId, targetUserId, sourceAction, reasonRequired = false, reason = "" }) {
+  if (!actorUserId || !targetUserId || !sourceAction) {
+    return false;
+  }
+
+  if (actorUserId === targetUserId) {
+    return false;
+  }
+
+  if (reasonRequired && !String(reason || "").trim()) {
+    return false;
+  }
+
+  return true;
+}
+
+function logAdministrativeAction(actionType, payload = {}) {
+  console.info("[ADMIN ACTION]", JSON.stringify({
+    actionType,
+    actorUserId: payload.actorUserId || null,
+    targetUserId: payload.targetUserId || null,
+    sourceAction: payload.sourceAction || null,
+    reason: payload.reason || null,
+    oldState: payload.oldState || null,
+    newState: payload.newState || null,
+    timestamp: new Date().toISOString()
+  }));
+}
+
+async function applyManualServiceHold({ guild, actorUserId, targetUserId, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const member = await guild.members.fetch(targetUserId).catch(() => null);
+  if (!member) {
+    return { ok: false, error: "member_not_found" };
+  }
+
+  if (member.roles.cache.has(config.serviceHoldRoleId)) {
+    return { ok: false, error: "service_hold_already_applied" };
+  }
+
+  await member.roles.add(config.serviceHoldRoleId).catch(() => null);
+  logAdministrativeAction("service_hold_apply", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    oldState: { serviceHold: false },
+    newState: { serviceHold: true }
+  });
+  return { ok: true, member };
+}
+
+async function removeManualServiceHold({ guild, actorUserId, targetUserId, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const member = await guild.members.fetch(targetUserId).catch(() => null);
+  if (!member) {
+    return { ok: false, error: "member_not_found" };
+  }
+
+  if (!member.roles.cache.has(config.serviceHoldRoleId)) {
+    return { ok: false, error: "service_hold_not_applied" };
+  }
+
+  await member.roles.remove(config.serviceHoldRoleId).catch(() => null);
+  logAdministrativeAction("service_hold_remove", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    oldState: { serviceHold: true },
+    newState: { serviceHold: false }
+  });
+  return { ok: true, member };
+}
+
+function applyManualBankFreeze({ actorUserId, targetUserId, reason, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, reasonRequired: true, reason, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const account = getAccount(targetUserId);
+  if (!account) {
+    return { ok: false, error: "account_not_found" };
+  }
+
+  if (account.bankFrozen) {
+    return { ok: false, error: "bank_already_frozen" };
+  }
+
+  const oldState = {
+    bankFrozen: Boolean(account.bankFrozen),
+    bankFrozenReason: account.bankFrozenReason || null
+  };
+
+  const updated = updateAccount(targetUserId, (current) => {
+    current.bankFrozen = true;
+    current.bankFrozenReason = reason;
+    current.bankFrozenBy = actorUserId;
+    current.bankFrozenAt = new Date().toISOString();
+    return current;
+  });
+
+  logAdministrativeAction("bank_freeze_apply", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    reason,
+    oldState,
+    newState: {
+      bankFrozen: Boolean(updated?.bankFrozen),
+      bankFrozenReason: updated?.bankFrozenReason || null
+    }
+  });
+
+  return { ok: true, account: updated };
+}
+
+function removeManualBankFreeze({ actorUserId, targetUserId, reason, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, reasonRequired: true, reason, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const account = getAccount(targetUserId);
+  if (!account) {
+    return { ok: false, error: "account_not_found" };
+  }
+
+  if (!account.bankFrozen) {
+    return { ok: false, error: "bank_not_frozen" };
+  }
+
+  const oldState = {
+    bankFrozen: Boolean(account.bankFrozen),
+    bankFrozenReason: account.bankFrozenReason || null
+  };
+
+  const updated = updateAccount(targetUserId, (current) => {
+    current.bankFrozen = false;
+    current.bankFrozenReason = null;
+    current.bankFrozenBy = null;
+    current.bankFrozenAt = null;
+    return current;
+  });
+
+  logAdministrativeAction("bank_freeze_remove", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    reason,
+    oldState,
+    newState: {
+      bankFrozen: Boolean(updated?.bankFrozen),
+      bankFrozenReason: updated?.bankFrozenReason || null
+    }
+  });
+
+  return { ok: true, account: updated };
+}
+
+async function applyManualAssetsSeizure({ guild, actorUserId, targetUserId, reason, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, reasonRequired: true, reason, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const account = getAccount(targetUserId);
+  if (!account) {
+    return { ok: false, error: "account_not_found" };
+  }
+
+  if (account.assetsSeized) {
+    return { ok: false, error: "assets_already_seized" };
+  }
+
+  const snapshot = {
+    cars: structuredClone(account.cars ?? {}),
+    resources: structuredClone(account.resources ?? {}),
+    weapons: structuredClone(account.weapons ?? {})
+  };
+
+  const oldState = {
+    assetsSeized: Boolean(account.assetsSeized),
+    carsCount: Object.keys(account.cars ?? {}).length
+  };
+
+  const updated = updateAccount(targetUserId, (current) => {
+    current.assetsSeized = true;
+    current.assetsSeizedReason = reason;
+    current.assetsSeizedBy = actorUserId;
+    current.assetsSeizedAt = new Date().toISOString();
+    current.seizedAssetsSnapshot = snapshot;
+    current.cars = {};
+    current.resources = { coal: 0, copper: 0, iron: 0, aluminum: 0, sulfur: 0, plastic: 0 };
+    current.weapons = {};
+    return current;
+  });
+
+  const member = guild ? await guild.members.fetch(targetUserId).catch(() => null) : null;
+  await member?.roles.remove(config.m9RoleId).catch(() => null);
+  await member?.roles.remove(COLT_ROLE_ID).catch(() => null);
+
+  logAdministrativeAction("assets_seize_apply", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    reason,
+    oldState,
+    newState: {
+      assetsSeized: Boolean(updated?.assetsSeized),
+      carsCount: Object.keys(updated?.cars ?? {}).length
+    }
+  });
+
+  return { ok: true, account: updated, snapshot };
+}
+
+function releaseManualAssetsSeizure({ actorUserId, targetUserId, reason, sourceAction }) {
+  if (!hasValidAdministrativeActionContext({ actorUserId, targetUserId, reasonRequired: true, reason, sourceAction })) {
+    return { ok: false, error: "invalid_admin_action_context" };
+  }
+
+  const account = getAccount(targetUserId);
+  if (!account) {
+    return { ok: false, error: "account_not_found" };
+  }
+
+  if (!account.assetsSeized || !account.seizedAssetsSnapshot) {
+    return { ok: false, error: "assets_not_seized" };
+  }
+
+  const snapshot = account.seizedAssetsSnapshot;
+  const oldState = {
+    assetsSeized: Boolean(account.assetsSeized),
+    carsCount: Object.keys(account.cars ?? {}).length
+  };
+
+  const updated = updateAccount(targetUserId, (current) => {
+    current.assetsSeized = false;
+    current.assetsSeizedReason = null;
+    current.assetsSeizedBy = null;
+    current.assetsSeizedAt = null;
+    current.cars = structuredClone(snapshot.cars ?? {});
+    current.resources = structuredClone(snapshot.resources ?? {});
+    current.weapons = structuredClone(snapshot.weapons ?? {});
+    current.seizedAssetsSnapshot = null;
+    return current;
+  });
+
+  logAdministrativeAction("assets_seize_release", {
+    actorUserId,
+    targetUserId,
+    sourceAction,
+    reason,
+    oldState,
+    newState: {
+      assetsSeized: Boolean(updated?.assetsSeized),
+      carsCount: Object.keys(updated?.cars ?? {}).length
+    }
+  });
+
+  return { ok: true, account: updated };
 }
 
 async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
@@ -9892,13 +10220,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const inventoryWeaponKey = weapon.inventoryKey || weaponKey;
         const roleId = inventoryWeaponKey === "m9" ? config.m9RoleId : COLT_ROLE_ID;
-
-        if (roleId) {
-          await interaction.member.roles.add(roleId).catch(() => null);
-        }
-
         let craftedWeaponCode = "";
-        updateAccount(interaction.user.id, (current) => {
+        const weaponCraftCommit = mutateStore((store) => {
+          const current = getMutableAccount(store, interaction.user.id);
+          if (!current) {
+            return { ok: false, error: "account_not_found" };
+          }
+
           current.resources ??= {
             coal: 0,
             copper: 0,
@@ -9907,6 +10235,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
             sulfur: 0,
             plastic: 0
           };
+
+          if (Number(current.balance || 0) < weapon.cash) {
+            return { ok: false, error: "insufficient_balance" };
+          }
+
+          for (const [resourceKey, amount] of Object.entries(weapon.resources)) {
+            if (Number(current.resources?.[resourceKey] || 0) < Number(amount || 0)) {
+              return { ok: false, error: "insufficient_resources" };
+            }
+          }
+
           current.balance -= weapon.cash;
           const slotIndex = appendWeaponInventory(current, inventoryWeaponKey, {
             craftedAt: new Date().toISOString(),
@@ -9919,28 +10258,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
             source: availableLevels.includes("level2") && weapon.levels.includes("level2") ? "crafting_level2" : "crafting_level1",
             weaponLabel: (weapon.label || "").replace(" مؤقت", "").replace(" دائم", ""),
             killCount: 0,
-            qualityPercent: weapon.permanent === false ? 100 : 100
+            qualityPercent: 100
           });
           craftedWeaponCode = buildWeaponInventoryCode(inventoryWeaponKey, slotIndex);
           for (const [resourceKey, amount] of Object.entries(weapon.resources)) {
             current.resources[resourceKey] -= amount;
           }
-          return current;
+
+          appendTransactionToStore(store, {
+            discordUserId: interaction.user.id,
+            robloxUsername: current.robloxUsername,
+            type: "weapon_craft",
+            amount: weapon.cash,
+            direction: "debit",
+            balanceAfter: current.balance,
+            metadata: {
+              weaponKey: inventoryWeaponKey,
+              roleId
+            }
+          });
+
+          return {
+            ok: true,
+            updatedAccount: structuredClone(current)
+          };
         });
 
-        const updatedAccount = getAccount(interaction.user.id);
-        appendTransaction({
-          discordUserId: interaction.user.id,
-          robloxUsername: updatedAccount.robloxUsername,
-          type: "weapon_craft",
-          amount: weapon.cash,
-          direction: "debit",
-          balanceAfter: updatedAccount.balance,
-          metadata: {
-            weaponKey: inventoryWeaponKey,
-            roleId
-          }
-        });
+        if (!weaponCraftCommit?.ok) {
+          await interaction.editReply({
+            content: weaponCraftCommit?.error === "insufficient_balance"
+              ? "رصيدك البنكي لا يكفي للتصنيع."
+              : weaponCraftCommit?.error === "insufficient_resources"
+                ? [
+                    "الموارد غير مكتملة:",
+                    ...resourceGaps.map((item) =>
+                      `• ${RESOURCE_CATALOG[item.resourceKey].label}: المطلوب ${item.requiredAmount} | المتوفر ${item.currentAmount}`
+                    )
+                  ].join("\n")
+                : "تعذر إكمال التصنيع."
+          });
+          return;
+        }
+
+        const updatedAccount = weaponCraftCommit.updatedAccount;
+
+        if (roleId) {
+          await interaction.member.roles.add(roleId).catch((error) => {
+            console.error("Failed to add crafted weapon role:", error);
+          });
+        }
 
         await sendAuditLog(client, config.auditChannelId, {
           title: "🔧 **تصنيع سلاح**",
@@ -10196,20 +10562,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        try {
-          await interaction.member.roles.add(config.m9RoleId);
-        } catch (error) {
-          console.error("Failed to add M9 role:", error);
-          await interaction.reply({
-            content: "تعذر إضافة رتبة السلاح. تأكد أن رتبة البوت أعلى من رتبة السلاح ثم جرّب مرة ثانية.",
-            ephemeral: true
-          });
-          return;
-        }
-
         let purchasedWeaponCode = "";
         let purchasedWeaponExpiry = null;
-        updateAccount(interaction.user.id, (current) => {
+        const weaponPurchaseCommit = mutateStore((store) => {
+          const current = getMutableAccount(store, interaction.user.id);
+          if (!current) {
+            return { ok: false, error: "account_not_found" };
+          }
+
+          if (Number(current.balance || 0) < M9_REQUIREMENTS.cash) {
+            return { ok: false, error: "insufficient_balance" };
+          }
+
+          current.resources ??= {
+            coal: 0,
+            copper: 0,
+            iron: 0,
+            aluminum: 0,
+            sulfur: 0,
+            plastic: 0
+          };
+
+          for (const [resourceKey, amount] of Object.entries(M9_REQUIREMENTS.resources)) {
+            if (Number(current.resources?.[resourceKey] || 0) < Number(amount || 0)) {
+              return { ok: false, error: "insufficient_resources" };
+            }
+          }
+
           purchasedWeaponExpiry = scheduleWeaponExpiryDate(current, "m9", getRandomWeaponExpiryDurationMs());
           const slotIndex = appendWeaponInventory(current, "m9", {
             purchasedAt: new Date().toISOString(),
@@ -10228,22 +10607,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
           for (const [resourceKey, amount] of Object.entries(M9_REQUIREMENTS.resources)) {
             current.resources[resourceKey] -= amount;
           }
-          return current;
+
+          appendTransactionToStore(store, {
+            discordUserId: interaction.user.id,
+            robloxUsername: current.robloxUsername,
+            type: "weapon_purchase",
+            amount: M9_REQUIREMENTS.cash,
+            direction: "debit",
+            balanceAfter: current.balance,
+            metadata: {
+              weaponCode: "M9",
+              roleId: config.m9RoleId
+            }
+          });
+
+          return {
+            ok: true,
+            updatedAccount: structuredClone(current)
+          };
         });
 
-        const updatedAccount = getAccount(interaction.user.id);
-        appendTransaction({
-          discordUserId: interaction.user.id,
-          robloxUsername: updatedAccount.robloxUsername,
-          type: "weapon_purchase",
-          amount: M9_REQUIREMENTS.cash,
-          direction: "debit",
-          balanceAfter: updatedAccount.balance,
-          metadata: {
-            weaponCode: "M9",
-            roleId: config.m9RoleId
-          }
-        });
+        if (!weaponPurchaseCommit?.ok) {
+          const failureMessage = weaponPurchaseCommit?.error === "insufficient_resources"
+            ? `الموارد غير مكتملة.\n${resourceRequirementsText()}`
+            : weaponPurchaseCommit?.error === "insufficient_balance"
+              ? "رصيدك البنكي لا يكفي لشراء السلاح."
+              : "تعذر شراء السلاح الآن.";
+          await interaction.reply({
+            content: failureMessage,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const updatedAccount = weaponPurchaseCommit.updatedAccount;
+
+        try {
+          await interaction.member.roles.add(config.m9RoleId);
+        } catch (error) {
+          console.error("Failed to add M9 role after purchase:", error);
+        }
         await sendAuditLog(client, config.auditChannelId, {
           title: "🔫 **شراء سلاح M9**",
           description: "**تم شراء السلاح بنجاح وخصم قيمته وموارده من الحساب البنكي.**",
@@ -10335,44 +10738,73 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        updateAccount(transfer.fromUserId, (current) => {
-          current.balance -= transfer.amount;
-          return current;
-        });
+        const transferCommit = mutateStore((store) => {
+          const mutableSender = getMutableAccount(store, transfer.fromUserId);
+          const mutableTarget = getMutableAccount(store, transfer.toUserId);
 
-        updateAccount(transfer.toUserId, (current) => {
-          current.balance += transfer.amount;
-          return current;
-        });
-
-        const senderAfter = getAccount(transfer.fromUserId);
-        const targetAfter = getAccount(transfer.toUserId);
-
-        appendTransaction({
-          discordUserId: transfer.fromUserId,
-          robloxUsername: senderAccount.robloxUsername,
-          type: "transfer_sent",
-          amount: transfer.amount,
-          direction: "debit",
-          balanceAfter: senderAfter.balance,
-          metadata: {
-            targetUserId: transfer.toUserId,
-            targetAccountNumber: targetAccount.accountNumber
+          if (!mutableSender || !mutableTarget) {
+            return { ok: false, error: "account_not_found" };
           }
+
+          if (isAccountBankFrozen(mutableSender) || isAccountBankFrozen(mutableTarget)) {
+            return { ok: false, error: "account_frozen" };
+          }
+
+          if (Number(mutableSender.balance || 0) < transfer.amount) {
+            return { ok: false, error: "insufficient_balance" };
+          }
+
+          mutableSender.balance -= transfer.amount;
+          mutableTarget.balance += transfer.amount;
+
+          appendTransactionToStore(store, {
+            discordUserId: transfer.fromUserId,
+            robloxUsername: mutableSender.robloxUsername,
+            type: "transfer_sent",
+            amount: transfer.amount,
+            direction: "debit",
+            balanceAfter: mutableSender.balance,
+            metadata: {
+              targetUserId: transfer.toUserId,
+              targetAccountNumber: mutableTarget.accountNumber
+            }
+          });
+
+          appendTransactionToStore(store, {
+            discordUserId: transfer.toUserId,
+            robloxUsername: mutableTarget.robloxUsername,
+            type: "transfer_received",
+            amount: transfer.amount,
+            direction: "credit",
+            balanceAfter: mutableTarget.balance,
+            metadata: {
+              sourceUserId: transfer.fromUserId,
+              sourceAccountNumber: mutableSender.accountNumber
+            }
+          });
+
+          return {
+            ok: true,
+            senderAfter: structuredClone(mutableSender),
+            targetAfter: structuredClone(mutableTarget)
+          };
         });
 
-        appendTransaction({
-          discordUserId: transfer.toUserId,
-          robloxUsername: targetAccount.robloxUsername,
-          type: "transfer_received",
-          amount: transfer.amount,
-          direction: "credit",
-          balanceAfter: targetAfter.balance,
-          metadata: {
-            sourceUserId: transfer.fromUserId,
-            sourceAccountNumber: senderAccount.accountNumber
-          }
-        });
+        if (!transferCommit?.ok) {
+          await interaction.editReply({
+            content: transferCommit?.error === "account_frozen"
+              ? "تعذر تنفيذ التحويل لأن أحد الحسابين مجمّد حكوميًا."
+              : transferCommit?.error === "insufficient_balance"
+                ? "رصيدك لم يعد كافيًا لإتمام التحويل."
+                : "تعذر إتمام التحويل لعدم وجود حساب.",
+            embeds: [],
+            components: []
+          }).catch(() => null);
+          return;
+        }
+
+        const senderAfter = transferCommit.senderAfter;
+        const targetAfter = transferCommit.targetAfter;
 
         await sendAuditLog(client, config.auditChannelId, {
           title: "💸 **تحويل بنكي ناجح**",
@@ -11686,20 +12118,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const targetUser = await resolveUser(interaction.fields.getTextInputValue("hold_target"));
+        const targetUser = await resolveAdministrativeTargetUser(interaction.fields.getTextInputValue("hold_target"));
         if (!targetUser) {
-          await interaction.reply({ content: "الشخص غير موجود.", ephemeral: true });
+          await interaction.reply({ content: "اكتب منشن الشخص أو آيدي الديسكورد أو رقم الحساب فقط.", ephemeral: true });
           return;
         }
 
-        const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
-        if (!member) {
-          await interaction.reply({ content: "تعذر العثور على العضو داخل السيرفر.", ephemeral: true });
+        const result = await applyManualServiceHold({
+          guild: interaction.guild,
+          actorUserId: interaction.user.id,
+          targetUserId: targetUser.id,
+          sourceAction: "modal_apply_hold"
+        });
+
+        if (!result.ok) {
+          await interaction.reply({
+            content: result.error === "service_hold_already_applied"
+              ? "إيقاف الخدمات مطبق بالفعل على هذا الشخص."
+              : "تعذر تطبيق إيقاف الخدمات على هذا الشخص.",
+            ephemeral: true
+          });
           return;
         }
 
-        await member.roles.add(config.serviceHoldRoleId).catch(() => null);
-        await member.send({
+        await result.member.send({
           embeds: [buildServiceHoldAppliedEmbed()]
         }).catch(() => null);
         await sendAuditLog(client, config.auditChannelId, {
@@ -11721,20 +12163,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const targetUser = await resolveUser(interaction.fields.getTextInputValue("hold_target"));
+        const targetUser = await resolveAdministrativeTargetUser(interaction.fields.getTextInputValue("hold_target"));
         if (!targetUser) {
-          await interaction.reply({ content: "الشخص غير موجود.", ephemeral: true });
+          await interaction.reply({ content: "اكتب منشن الشخص أو آيدي الديسكورد أو رقم الحساب فقط.", ephemeral: true });
           return;
         }
 
-        const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
-        if (!member) {
-          await interaction.reply({ content: "تعذر العثور على العضو داخل السيرفر.", ephemeral: true });
+        const result = await removeManualServiceHold({
+          guild: interaction.guild,
+          actorUserId: interaction.user.id,
+          targetUserId: targetUser.id,
+          sourceAction: "modal_admin_remove_hold"
+        });
+
+        if (!result.ok) {
+          await interaction.reply({
+            content: result.error === "service_hold_not_applied"
+              ? "هذا الشخص لا يملك إيقاف خدمات أصلًا."
+              : "تعذر رفع إيقاف الخدمات عن هذا الشخص.",
+            ephemeral: true
+          });
           return;
         }
 
-        await member.roles.remove(config.serviceHoldRoleId).catch(() => null);
-        await member.send({
+        await result.member.send({
           embeds: [buildServiceHoldDecisionEmbedPolished({ approved: true })]
         }).catch(() => null);
         await sendAuditLog(client, config.auditChannelId, {
@@ -11827,11 +12279,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const targetUser = await resolveUser(interaction.fields.getTextInputValue("target_user"));
+        const targetUser = await resolveAdministrativeTargetUser(interaction.fields.getTextInputValue("target_user"));
         const amount = parseWholeNumberInput(interaction.fields.getTextInputValue("amount"));
         const reason = interaction.fields.getTextInputValue("reason");
         if (!targetUser) {
-          await interaction.reply({ content: "الشخص غير موجود.", ephemeral: true });
+          await interaction.reply({ content: "اكتب منشن الشخص أو آيدي الديسكورد أو رقم الحساب فقط.", ephemeral: true });
           return;
         }
         if (targetUser.id === interaction.user.id) {
@@ -11928,32 +12380,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const targetUser = await resolveUser(interaction.fields.getTextInputValue("target_user"));
+        const targetUser = await resolveAdministrativeTargetUser(interaction.fields.getTextInputValue("target_user"));
         const reason = interaction.fields.getTextInputValue("reason");
         if (!targetUser) {
-          await interaction.reply({ content: "الشخص غير موجود.", ephemeral: true });
-          return;
-        }
-
-        const account = getAccount(targetUser.id);
-        if (!account) {
-          await interaction.reply({ content: "هذا الشخص لا يملك حسابًا بنكيًا.", ephemeral: true });
+          await interaction.reply({ content: "اكتب منشن الشخص أو آيدي الديسكورد أو رقم الحساب فقط.", ephemeral: true });
           return;
         }
 
         if (interaction.customId === "modal_police_bank_freeze") {
-          if (account.bankFrozen) {
+          const result = applyManualBankFreeze({
+            actorUserId: interaction.user.id,
+            targetUserId: targetUser.id,
+            reason,
+            sourceAction: "modal_police_bank_freeze"
+          });
+
+          if (!result.ok) {
             await interaction.reply({ content: "هذا الحساب مجمّد بالفعل.", ephemeral: true });
             return;
           }
-
-          const updated = updateAccount(targetUser.id, (current) => {
-            current.bankFrozen = true;
-            current.bankFrozenReason = reason;
-            current.bankFrozenBy = interaction.user.id;
-            current.bankFrozenAt = new Date().toISOString();
-            return current;
-          });
+          const updated = result.account;
 
           await sendPoliceBankLog({
             title: "❄️ **تجميد حساب بنكي**",
@@ -11971,18 +12417,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (interaction.customId === "modal_police_bank_unfreeze") {
-          if (!account.bankFrozen) {
+          const result = removeManualBankFreeze({
+            actorUserId: interaction.user.id,
+            targetUserId: targetUser.id,
+            reason,
+            sourceAction: "modal_police_bank_unfreeze"
+          });
+
+          if (!result.ok) {
             await interaction.reply({ content: "هذا الحساب غير مجمّد أصلًا.", ephemeral: true });
             return;
           }
-
-          const updated = updateAccount(targetUser.id, (current) => {
-            current.bankFrozen = false;
-            current.bankFrozenReason = null;
-            current.bankFrozenBy = null;
-            current.bankFrozenAt = null;
-            return current;
-          });
+          const updated = result.account;
 
           await sendPoliceBankLog({
             title: "✅ **رفع تجميد حساب بنكي**",
@@ -12000,33 +12446,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (interaction.customId === "modal_police_bank_seize_assets") {
-          if (account.assetsSeized) {
+          const result = await applyManualAssetsSeizure({
+            guild: interaction.guild,
+            actorUserId: interaction.user.id,
+            targetUserId: targetUser.id,
+            reason,
+            sourceAction: "modal_police_bank_seize_assets"
+          });
+
+          if (!result.ok) {
             await interaction.reply({ content: "ممتلكات هذا الشخص محجوزة بالفعل.", ephemeral: true });
             return;
           }
-
-          const snapshot = {
-            cars: structuredClone(account.cars ?? {}),
-            resources: structuredClone(account.resources ?? {}),
-            weapons: structuredClone(account.weapons ?? {})
-          };
-
-          const updated = updateAccount(targetUser.id, (current) => {
-            current.assetsSeized = true;
-            current.assetsSeizedReason = reason;
-            current.assetsSeizedBy = interaction.user.id;
-            current.assetsSeizedAt = new Date().toISOString();
-            current.seizedAssetsSnapshot = snapshot;
-            current.cars = {};
-            current.resources = { coal: 0, copper: 0, iron: 0, aluminum: 0, sulfur: 0, plastic: 0 };
-            current.weapons = {};
-            return current;
-          });
-
-          const guild = await client.guilds.fetch(config.guildId).catch(() => null);
-          const member = guild ? await guild.members.fetch(targetUser.id).catch(() => null) : null;
-          await member?.roles.remove(config.m9RoleId).catch(() => null);
-          await member?.roles.remove(COLT_ROLE_ID).catch(() => null);
+          const updated = result.account;
+          const snapshot = result.snapshot;
 
           await sendPoliceBankLog({
             title: "📦 **حجز ممتلكات مواطن**",
@@ -12044,23 +12477,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (!account.assetsSeized || !account.seizedAssetsSnapshot) {
+        const result = releaseManualAssetsSeizure({
+          actorUserId: interaction.user.id,
+          targetUserId: targetUser.id,
+          reason,
+          sourceAction: "modal_police_bank_release_assets"
+        });
+
+        if (!result.ok) {
           await interaction.reply({ content: "لا يوجد حجز ممتلكات مسجل على هذا الشخص.", ephemeral: true });
           return;
         }
-
-        const snapshot = account.seizedAssetsSnapshot;
-        const updated = updateAccount(targetUser.id, (current) => {
-          current.assetsSeized = false;
-          current.assetsSeizedReason = null;
-          current.assetsSeizedBy = null;
-          current.assetsSeizedAt = null;
-          current.cars = structuredClone(snapshot.cars ?? {});
-          current.resources = structuredClone(snapshot.resources ?? {});
-          current.weapons = structuredClone(snapshot.weapons ?? {});
-          current.seizedAssetsSnapshot = null;
-          return current;
-        });
+        const updated = result.account;
 
         const guild = await client.guilds.fetch(config.guildId).catch(() => null);
         const member = guild ? await guild.members.fetch(targetUser.id).catch(() => null) : null;
@@ -12913,5 +13341,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
-
