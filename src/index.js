@@ -3381,24 +3381,29 @@ async function pollActiveVehicles() {
       continue;
     }
 
-    const linkedAccount = await resolveLinkedVehicleOwnerAccount(
+    const ownerResolution = await resolveLinkedVehicleOwnerAccount(
       guild,
       ownerUsername,
       canonicalVehicleName
     );
+    const linkedAccount = ownerResolution?.account ?? null;
 
     const possibleVehicleOwners = findAccountsOwningVehicle(canonicalVehicleName);
     const matchedPossibleOwner = possibleVehicleOwners.find((account) =>
-      robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
+      robloxUsernamesStrictlyMatchForOwnership(account.robloxUsername, ownerUsername)
     );
     const verifiedOwnerAccount = matchedPossibleOwner || linkedAccount;
+    const hasConfidentOwnerMatch = Boolean(
+      matchedPossibleOwner?.discordUserId
+      || (ownerResolution?.confident && linkedAccount?.discordUserId)
+    );
 
-    if (!verifiedOwnerAccount?.discordUserId && possibleVehicleOwners.length === 1) {
+    if (!hasConfidentOwnerMatch && possibleVehicleOwners.length === 1) {
       processedVehicleIds.set(uniqueKey, Date.now());
       continue;
     }
 
-    if (!verifiedOwnerAccount?.discordUserId) {
+    if (!hasConfidentOwnerMatch || !verifiedOwnerAccount?.discordUserId) {
       const skipLogKey = `${normalizeVehicleName(ownerUsername)}|${normalizeVehicleName(canonicalVehicleName)}`;
       const lastSkipLogAt = recentVehicleSkipLogs.get(skipLogKey) || 0;
       if (Date.now() - lastSkipLogAt >= 2 * 60 * 1000) {
@@ -3406,7 +3411,7 @@ async function pollActiveVehicles() {
           ownerUsername,
           vehicleName: canonicalVehicleName,
           allowed: true,
-          reason: `تم تخطي العقوبة لأن النظام لم يستطع ربط الحساب بثقة. الفريق: ${ownerTeam || "غير معروف"} • الاسم القادم من الماب: ${parsed.vehicleName || canonicalVehicleName}`
+          reason: `تم تخطي العقوبة لأن النظام لم يستطع ربط الحساب بثقة. المصدر: ${ownerResolution?.matchSource || "unknown"} • الفريق: ${ownerTeam || "غير معروف"} • الاسم القادم من الماب: ${parsed.vehicleName || canonicalVehicleName}`
         }).catch(() => null);
         recentVehicleSkipLogs.set(skipLogKey, Date.now());
       }
@@ -4243,34 +4248,65 @@ function robloxUsernamesMatchForOwnership(left, right) {
     || normalizedRight.includes(normalizedLeft);
 }
 
+function robloxUsernamesStrictlyMatchForOwnership(left, right) {
+  const normalizedLeft = normalizeRobloxUsernameForOwnership(left);
+  const normalizedRight = normalizeRobloxUsernameForOwnership(right);
+
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return normalizedLeft === normalizedRight;
+}
+
 async function resolveLinkedVehicleOwnerAccount(guild, ownerUsername, vehicleName) {
   let linkedAccount = findAccountByRobloxUsername(ownerUsername);
   if (linkedAccount?.discordUserId) {
-    return linkedAccount;
+    return {
+      account: linkedAccount,
+      confident: true,
+      matchSource: "roblox_account_link"
+    };
   }
 
   const linkedMember = await findGuildMemberByRobloxUsername(guild, ownerUsername).catch(() => null);
   if (linkedMember?.id) {
     linkedAccount = getAccount(linkedMember.id);
-    if (linkedAccount?.discordUserId) {
-      return linkedAccount;
+    if (linkedAccount?.discordUserId && robloxUsernamesStrictlyMatchForOwnership(linkedAccount.robloxUsername, ownerUsername)) {
+      return {
+        account: linkedAccount,
+        confident: true,
+        matchSource: "guild_member_link"
+      };
     }
   }
 
   const vehicleOwners = findAccountsOwningVehicle(vehicleName);
   const matchedVehicleOwner = vehicleOwners.find((account) =>
-    robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
+    robloxUsernamesStrictlyMatchForOwnership(account.robloxUsername, ownerUsername)
   );
 
   if (matchedVehicleOwner?.discordUserId) {
-    return matchedVehicleOwner;
+    return {
+      account: matchedVehicleOwner,
+      confident: true,
+      matchSource: "vehicle_owner_exact"
+    };
   }
 
   if (vehicleOwners.length === 1) {
-    return vehicleOwners[0];
+    return {
+      account: vehicleOwners[0],
+      confident: false,
+      matchSource: "single_owner_fallback"
+    };
   }
 
-  return null;
+  return {
+    account: null,
+    confident: false,
+    matchSource: "unresolved"
+  };
 }
 
 function memberHasServiceHold(member) {
@@ -13341,3 +13377,11 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
+
+
+
+
+
+
+
