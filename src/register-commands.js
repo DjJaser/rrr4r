@@ -1,4 +1,4 @@
-import { REST, Routes, SlashCommandBuilder } from "discord.js";
+import { ChannelType, REST, Routes, SlashCommandBuilder } from "discord.js";
 import * as configModule from "./config.js";
 import { buildBudgetCommandChoices } from "./budget-system.js";
 import { buildProjectChoices, STATION_PROJECT_KEYS } from "./project-system.js";
@@ -372,6 +372,17 @@ const commands = [
     ),
   new SlashCommandBuilder().setName("ايمبد-المعلومات").setDescription("يعرض لوحة معلومات وممتلكات الأسلحة"),
   new SlashCommandBuilder().setName("activite").setDescription("عرض واجهة التفعيل داخل عرب وورلد")
+,
+  new SlashCommandBuilder()
+    .setName("ادخال-فويس")
+    .setDescription("إدخال البوت إلى روم فويس محدد وإبقاؤه داخله")
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("روم الفويس المطلوب")
+        .addChannelTypes(ChannelType.GuildVoice)
+        .setRequired(true)
+    )
 ];
 
 const rest = new REST({ version: "10" }).setToken(config.token);
