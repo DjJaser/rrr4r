@@ -48,6 +48,14 @@ function writeStore(store) {
   fs.writeFileSync(dataFile, JSON.stringify(store, null, 2), "utf8");
 }
 
+function buildTransactionRecord(entry) {
+  return {
+    id: `${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    createdAt: new Date().toISOString(),
+    ...entry
+  };
+}
+
 function makeAccountNumber() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
@@ -421,6 +429,24 @@ export function updateAccount(userId, updater) {
   return store.accounts[userId];
 }
 
+export function mutateStore(mutator) {
+  const store = readStore();
+  const result = mutator(store);
+  writeStore(store);
+  return result;
+}
+
+export function getMutableAccount(store, userId) {
+  const current = store.accounts?.[userId];
+  if (!current) {
+    return null;
+  }
+
+  const shaped = ensureAccountShape(current);
+  store.accounts[userId] = shaped;
+  return shaped;
+}
+
 export function removeAccountByName(name) {
   const store = readStore();
   const normalized = normalizeName(name);
@@ -526,14 +552,13 @@ export function findAccountByName(name) {
 }
 
 export function appendTransaction(entry) {
-  const store = readStore();
-  const record = {
-    id: `${Date.now()}_${Math.floor(Math.random() * 10000)}`,
-    createdAt: new Date().toISOString(),
-    ...entry
-  };
+  return mutateStore((store) => appendTransactionToStore(store, entry));
+}
+
+export function appendTransactionToStore(store, entry) {
+  store.transactions ??= [];
+  const record = buildTransactionRecord(entry);
   store.transactions.push(record);
-  writeStore(store);
   return record;
 }
 
