@@ -727,6 +727,30 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (pending.used) {
+        const recentReuseWindowMs = 2 * 60 * 1000;
+        const normalizedPendingUsername = String(pending.robloxUsername || "").trim().toLowerCase();
+        const normalizedPendingCode = normalizeWebsiteVerificationCode(pending.code);
+        const usedAtTime = pending.usedAt ? new Date(pending.usedAt).getTime() : 0;
+        const isSafeDuplicateSuccess =
+          normalizedPendingUsername === normalizedUsername
+          && normalizedPendingCode === code
+          && usedAtTime > 0
+          && now - usedAtTime <= recentReuseWindowMs;
+
+        if (isSafeDuplicateSuccess) {
+          const account = getAccount(pending.discordUserId);
+          if (!account) {
+            pendingWebsiteLoginVerifications.delete(resolvedVerificationId);
+            return res.status(404).json({ ok: false, error: "account_not_found" });
+          }
+
+          return res.status(200).json({
+            ok: true,
+            verified: true,
+            account: buildWebsiteAccountSnapshot(account)
+          });
+        }
+
         console.warn("Website verification failed: verification_already_used", {
           verificationId: resolvedVerificationId,
           robloxUsername
@@ -770,6 +794,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       pending.used = true;
+      pending.usedAt = new Date().toISOString();
       pendingWebsiteLoginVerifications.set(resolvedVerificationId, pending);
 
       return res.status(200).json({
