@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import {
+  ActivityType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -16,6 +17,7 @@ import {
   TextInputBuilder,
   TextInputStyle
 } from "discord.js";
+import { VoiceConnectionStatus, entersState, joinVoiceChannel } from "@discordjs/voice";
 import * as configModule from "./config.js";
 import {
   BUDGET_DEFINITIONS,
@@ -220,6 +222,7 @@ const pendingActivationRequests = new Map();
 let sortedVehicleCatalogCache = null;
 let sortedVehicleCatalogCacheKey = "";
 const pendingWebsiteLoginVerifications = new Map();
+let pinnedVoiceConnection = null;
 const ACTIVATION_REVIEW_CHANNEL_ID = "1494448244737183856";
 const ACTIVATION_ROLE_ID = "1460716225452572703";
 const ACTIVATION_REVIEW_PING_ROLE_ID = "1464609170845204648";
@@ -265,6 +268,51 @@ function applyCraftingImage(embed) {
 
 function requireAccount(userId) {
   return getAccount(userId);
+}
+
+async function connectBotToVoiceChannel(channel) {
+  if (!channel?.guild?.id || !channel?.id || !channel?.guild?.voiceAdapterCreator) {
+    throw new Error("invalid_voice_channel");
+  }
+
+  if (pinnedVoiceConnection) {
+    try {
+      pinnedVoiceConnection.destroy();
+    } catch {}
+  }
+
+  const connection = joinVoiceChannel({
+    guildId: channel.guild.id,
+    channelId: channel.id,
+    adapterCreator: channel.guild.voiceAdapterCreator,
+    selfDeaf: false,
+    selfMute: false
+  });
+
+  connection.on("error", (error) => {
+    console.error("Pinned voice connection error:", error);
+  });
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5_000)
+      ]);
+    } catch {
+      if (pinnedVoiceConnection === connection) {
+        pinnedVoiceConnection = null;
+      }
+
+      try {
+        connection.destroy();
+      } catch {}
+    }
+  });
+
+  await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+  pinnedVoiceConnection = connection;
+  return connection;
 }
 
 function getBankCardDefinition(cardType) {
@@ -6718,6 +6766,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (interaction.commandName === "ادخال-فويس") {
+        await interaction.deferReply({ ephemeral: true });
+
+        const channel = interaction.options.getChannel("channel", true);
+        if (!channel || !channel.isVoiceBased?.()) {
+          await interaction.editReply({ content: "اختر روم فويس صحيح أولًا." });
+          return;
+        }
+
+        try {
+          await connectBotToVoiceChannel(channel);
+          await interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0b1f3a)
+                .setTitle("🎙️ تم إدخال البوت إلى الفويس")
+                .setDescription("**تم إدخال البوت إلى الروم الصوتي المحدد وسيبقى داخله حتى يتم فصله أو إعادة تشغيله.**")
+                .addFields(
+                  { name: "📍 الروم", value: `**${channel.name}**`, inline: true },
+                  { name: "🏠 السيرفر", value: `**${channel.guild.name}**`, inline: true }
+                )
+                .setFooter({ text: "Arab World • Voice Control" })
+                .setTimestamp()
+            ]
+          });
+        } catch (error) {
+          console.error("Voice join command failed:", error);
+          await interaction.editReply({
+            content: "تعذر إدخال البوت إلى الروم الصوتي. تأكد أن البوت يملك صلاحية الدخول والتحدث في هذا الروم."
+          });
+        }
+        return;
+      }
+
       if (interaction.commandName === "بدء-المحطات") {
         if (!(await ensurePoliceBankPermission(interaction))) {
           return;
@@ -12757,6 +12839,15 @@ function startWebServer() {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+  readyClient.user.setPresence({
+    activities: [
+      {
+        name: "ملكية ArAbWoRld",
+        type: ActivityType.Playing
+      }
+    ],
+    status: "online"
+  });
 
   const readyGuild = readyClient.guilds.cache.get(config.guildId)
     || await readyClient.guilds.fetch(config.guildId).catch(() => null);
@@ -12822,3 +12913,5 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
+
