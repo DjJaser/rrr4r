@@ -1,5 +1,6 @@
 import express from "express";
 import fs from "fs";
+import { createPublicKey, verify as verifySignature } from "crypto";
 import {
   ActivityType,
   ActionRowBuilder,
@@ -207,6 +208,12 @@ const config = configModule.config ?? configModule.default;
 const assertConfig = configModule.assertConfig;
 const buildResourceInventoryCardAttachment = resourceCardModule.buildResourceInventoryCardAttachment;
 const buildResourceRewardCardAttachment = resourceCardModule.buildResourceRewardCardAttachment;
+const ERLC_EVENT_WEBHOOK_PUBLIC_KEY_BASE64 = "MCowBQYDK2VwAyEAjSICb9pp0kHizGQtdG8ySWsDChfGqi+gyFCttigBNOA=";
+const ERLC_EVENT_WEBHOOK_PUBLIC_KEY = createPublicKey({
+  key: Buffer.from(ERLC_EVENT_WEBHOOK_PUBLIC_KEY_BASE64, "base64"),
+  format: "der",
+  type: "spki"
+});
 
 assertConfig();
 
@@ -4585,6 +4592,26 @@ async function sendErlcEventWebhookToDiscord(payload, meta = {}) {
     ].join("\n"),
     files: [attachment]
   });
+}
+
+function verifyErlcEventWebhookRequest(req) {
+  const timestamp = String(req.headers["x-signature-timestamp"] || "").trim();
+  const sigHex = String(req.headers["x-signature-ed25519"] || "").trim().toLowerCase();
+
+  if (!timestamp || !sigHex || !/^[0-9a-f]+$/i.test(sigHex) || sigHex.length % 2 !== 0) {
+    return false;
+  }
+
+  const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from("");
+  const message = Buffer.concat([Buffer.from(timestamp, "utf8"), rawBody]);
+  const signature = Buffer.from(sigHex, "hex");
+
+  try {
+    return verifySignature(null, message, ERLC_EVENT_WEBHOOK_PUBLIC_KEY, signature);
+  } catch (error) {
+    console.error("ER:LC event webhook signature verification failure:", error);
+    return false;
+  }
 }
 
 const FINE_PAYMENTS_LOG_CHANNEL_ID = "1498637248701403207";
@@ -13187,33 +13214,25 @@ app.get("/", (req, res) => {
 
 app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
   try {
-    const headerKey = String(req.headers["x-webhook-key"] || "").trim();
-    const queryKey = String(req.query?.key || req.query?.token || "").trim();
     const method = String(req.method || "GET").toUpperCase();
-    const isAuthorized =
-      !config.erlcWebhookKey ||
-      headerKey === config.erlcWebhookKey ||
-      queryKey === config.erlcWebhookKey;
+    if (method !== "POST") {
+      return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    }
 
     const payload = req.body ?? {};
     const hasPayload = payload && typeof payload === "object" && Object.keys(payload).length > 0;
+    const isValidSignature = verifyErlcEventWebhookRequest(req);
+
+    if (!isValidSignature) {
+      return res.status(401).json({ ok: false, error: "invalid_signature" });
+    }
 
     if (!hasPayload) {
-      if (!isAuthorized) {
-        return res.status(401).json({ ok: false, error: "unauthorized_probe" });
-      }
-
       return res.status(200).json({
         ok: true,
         endpoint: "event-webhook",
-        probe: true,
-        method
+        probe: true
       });
-    }
-
-    if (!isAuthorized) {
-      console.warn("[ER:LC EVENT WEBHOOK] Unauthorized payload rejected.");
-      return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
     const eventType = String(
