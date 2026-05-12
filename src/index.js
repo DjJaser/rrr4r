@@ -13185,9 +13185,24 @@ app.get("/", (req, res) => {
   return res.status(200).send("Server Online");
 });
 
+app.get(["/webhook", "/erlc/event-webhook"], (req, res) => {
+  return res.status(200).json({
+    ok: true,
+    service: "arab-world-bot-webhook",
+    endpoint: "event-webhook"
+  });
+});
+
 app.post(["/webhook", "/erlc/event-webhook"], async (req, res) => {
   try {
-    if (req.headers["x-webhook-key"] !== config.erlcWebhookKey) {
+    const headerKey = String(req.headers["x-webhook-key"] || "").trim();
+    const queryKey = String(req.query?.key || req.query?.token || "").trim();
+    const isAuthorized =
+      !config.erlcWebhookKey ||
+      headerKey === config.erlcWebhookKey ||
+      queryKey === config.erlcWebhookKey;
+
+    if (!isAuthorized) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
@@ -13587,4 +13602,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
