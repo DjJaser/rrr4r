@@ -4353,6 +4353,23 @@ async function resolveLinkedVehicleOwnerAccount(guild, ownerUsername, vehicleNam
         matchSource: "guild_member_link"
       };
     }
+
+    if (linkedAccount?.discordUserId && userOwnsVehicle(linkedAccount.discordUserId, vehicleName)) {
+      const previousRobloxUsername = String(linkedAccount.robloxUsername || "").trim();
+      if (previousRobloxUsername && !robloxUsernamesStrictlyMatchForOwnership(previousRobloxUsername, ownerUsername)) {
+        updateAccount(linkedAccount.discordUserId, (current) => {
+          current.robloxUsername = ownerUsername;
+          return current;
+        });
+        linkedAccount = getAccount(linkedAccount.discordUserId) || linkedAccount;
+      }
+
+      return {
+        account: linkedAccount,
+        confident: true,
+        matchSource: "guild_member_vehicle_owner"
+      };
+    }
   }
 
   const vehicleOwners = findAccountsOwningVehicle(vehicleName);
@@ -4369,8 +4386,17 @@ async function resolveLinkedVehicleOwnerAccount(guild, ownerUsername, vehicleNam
   }
 
   if (vehicleOwners.length === 1) {
+    const singleOwner = vehicleOwners[0];
+    if (linkedMember?.id && singleOwner?.discordUserId === linkedMember.id) {
+      return {
+        account: singleOwner,
+        confident: true,
+        matchSource: "guild_member_single_vehicle_owner"
+      };
+    }
+
     return {
-      account: vehicleOwners[0],
+      account: singleOwner,
       confident: false,
       matchSource: "single_owner_fallback"
     };
@@ -13469,11 +13495,5 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
-
-
-
-
-
 
 
