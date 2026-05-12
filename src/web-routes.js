@@ -242,6 +242,10 @@ export function registerWebsiteRoutes(app, deps) {
     return memberUser || null;
   }
 
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function buildWebsiteVerificationDmPayload({ verificationId, account, robloxUsername, code, expiresAt }) {
     const safeUsername = account?.robloxUsername || robloxUsername || "غير معروف";
     const safeAccountNumber = account?.accountNumber || "غير متوفر";
@@ -282,26 +286,71 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    try {
+    const restEmbeds = Array.isArray(payload?.embeds)
+      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+      : [];
+
+    const attemptViaCachedUser = async () => {
       const cachedUser = getCachedDiscordUser(discordUserId);
-      if (cachedUser) {
-        await withTimeout(
-          () => cachedUser.send(payload),
-          6000,
-          "discord_cached_dm_timeout"
-        );
-        return { ok: true, delivery: "dm" };
+      if (!cachedUser) {
+        return { ok: false, error: "discord_user_not_cached" };
       }
 
-      const restEmbeds = Array.isArray(payload?.embeds)
-        ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-        : [];
+      await withTimeout(
+        () => cachedUser.send(payload),
+        9000,
+        "discord_cached_dm_timeout"
+      );
 
+      return { ok: true, delivery: "dm_cache" };
+    };
+
+    const attemptViaFetchedUser = async () => {
+      const fetchedUser = await withTimeout(
+        () => client.users.fetch(discordUserId, { force: true }),
+        9000,
+        "discord_user_fetch_timeout"
+      );
+
+      if (!fetchedUser) {
+        return { ok: false, error: "discord_user_fetch_failed" };
+      }
+
+      await withTimeout(
+        () => fetchedUser.send(payload),
+        9000,
+        "discord_fetched_dm_timeout"
+      );
+
+      return { ok: true, delivery: "dm_fetch" };
+    };
+
+    const attemptViaGuildMember = async () => {
+      const member = await withTimeout(
+        () => findGuildMemberForWebsiteAccess(discordUserId),
+        9000,
+        "guild_member_lookup_timeout"
+      );
+
+      if (!member?.user) {
+        return { ok: false, error: "guild_member_not_found" };
+      }
+
+      await withTimeout(
+        () => member.user.send(payload),
+        9000,
+        "discord_member_dm_timeout"
+      );
+
+      return { ok: true, delivery: "dm_member" };
+    };
+
+    const attemptViaRest = async () => {
       const dmChannel = await withTimeout(
         () => client.rest.post(Routes.userChannels(), {
           body: { recipient_id: discordUserId }
         }),
-        6000,
+        9000,
         "discord_dm_channel_timeout"
       );
 
@@ -312,17 +361,49 @@ export function registerWebsiteRoutes(app, deps) {
             embeds: restEmbeds
           }
         }),
-        6000,
+        9000,
         "discord_dm_send_timeout"
       );
 
-      return { ok: true, delivery: "rest" };
+      return { ok: true, delivery: "dm_rest" };
+    };
+
+    const attempts = [
+      attemptViaCachedUser,
+      attemptViaFetchedUser,
+      attemptViaGuildMember,
+      attemptViaRest,
+      attemptViaRest
+    ];
+
+    let lastError = "dm_delivery_failed";
+
+    try {
+      for (let index = 0; index < attempts.length; index += 1) {
+        try {
+          const result = await attempts[index]();
+          if (result?.ok) {
+            return result;
+          }
+          if (result?.error) {
+            lastError = result.error;
+          }
+        } catch (error) {
+          lastError = error?.message || lastError;
+        }
+
+        if (index < attempts.length - 1) {
+          await delay(700);
+        }
+      }
     } catch (error) {
-      return {
-        ok: false,
-        error: error?.message || (error?.code ? `discord_api_${error.code}` : "dm_delivery_failed")
-      };
+      lastError = error?.message || (error?.code ? `discord_api_${error.code}` : lastError);
     }
+
+    return {
+      ok: false,
+      error: lastError || "dm_delivery_failed"
+    };
   }
 
   async function withTimeout(promiseFactory, timeoutMs = 5000, timeoutError = "timeout") {
