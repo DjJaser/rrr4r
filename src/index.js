@@ -13207,17 +13207,21 @@ app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
     const payload = req.body ?? {};
     const hasPayload = payload && typeof payload === "object" && Object.keys(payload).length > 0;
 
-    if (!isAuthorized && hasPayload) {
-      console.warn("[ER:LC EVENT WEBHOOK] Unauthorized payload rejected.");
-      return res.status(401).json({ ok: false, error: "unauthorized" });
-    }
-
     if (!hasPayload) {
+      if (!isAuthorized) {
+        return res.status(401).json({ ok: false, error: "unauthorized_probe" });
+      }
+
       return res.status(200).json({
         ok: true,
         endpoint: "event-webhook",
         probe: true
       });
+    }
+
+    if (!isAuthorized) {
+      console.warn("[ER:LC EVENT WEBHOOK] Unauthorized payload rejected.");
+      return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
     const eventType = String(
@@ -13617,5 +13621,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
-
