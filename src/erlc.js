@@ -470,7 +470,7 @@ async function runPunishmentCooldown(key, handler) {
   return true;
 }
 
-export async function punishUnauthorizedWeaponUse(robloxUsername) {
+export async function punishUnauthorizedWeaponUse(robloxUsername, reasonMessage = "استخرجت سلاحا غير مملوك أو غير مصرح لك به") {
   await runPunishmentCooldown(`weapon:${robloxUsername}`, async () => {
     await enqueueErlcCommand(`:jail ${robloxUsername}`);
     await enqueueErlcCommand(`:pm ${robloxUsername} تم سجنك بسبب عدم امتلاك صلاحية السلاح`);
@@ -481,6 +481,13 @@ export async function punishUnauthorizedVehicleUse(robloxUsername) {
   await runPunishmentCooldown(`vehicle:${robloxUsername}`, async () => {
     await enqueueErlcCommand(`:jail ${robloxUsername}`);
     await enqueueErlcCommand(`:pm ${robloxUsername} استخرجت مركبه لا تملكها`);
+  });
+}
+
+async function punishUnauthorizedWeaponUseDetailed(robloxUsername, weaponLabel = "السلاح") {
+  await runPunishmentCooldown(`weapon:${robloxUsername}`, async () => {
+    await enqueueErlcCommand(`:jail ${robloxUsername}`);
+    await enqueueErlcCommand(`:pm ${robloxUsername} استخرجت ${weaponLabel} غير مملوك أو غير مصرح لك به`);
   });
 }
 
@@ -503,7 +510,7 @@ export async function verifyWeaponOwnership({ guild, robloxUsername, weaponRoleI
     }
 
     if (linkedMember) {
-      await punishUnauthorizedWeaponUse(robloxUsername);
+      await punishUnauthorizedWeaponUseDetailed(robloxUsername, weaponRoleId === config.m9RoleId ? "سلاح M9" : "سلاح Colt");
       return { allowed: false, reason: "role_missing", memberId: linkedMember.id, matchSource: "bank_account_link" };
     }
   }
@@ -517,7 +524,7 @@ export async function verifyWeaponOwnership({ guild, robloxUsername, weaponRoleI
   });
 
   if (!member) {
-    await punishUnauthorizedWeaponUse(robloxUsername);
+    await punishUnauthorizedWeaponUseDetailed(robloxUsername, weaponRoleId === config.m9RoleId ? "سلاح M9" : "سلاح Colt");
     return { allowed: false, reason: "member_not_found", checkedUsername: robloxUsername };
   }
 
@@ -530,7 +537,7 @@ export async function verifyWeaponOwnership({ guild, robloxUsername, weaponRoleI
   }
 
   if (!member.roles.cache.has(weaponRoleId)) {
-    await punishUnauthorizedWeaponUse(robloxUsername);
+    await punishUnauthorizedWeaponUseDetailed(robloxUsername, weaponRoleId === config.m9RoleId ? "سلاح M9" : "سلاح Colt");
     return { allowed: false, reason: "role_missing", memberId: member.id, checkedUsername: robloxUsername };
   }
 
