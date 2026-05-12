@@ -3,6 +3,7 @@ import fs from "fs";
 import {
   ActivityType,
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -4529,6 +4530,61 @@ async function sendSystemLogs(channelIds, payload) {
   for (const channelId of [...new Set(channelIds.filter(Boolean))]) {
     await sendSystemLog(channelId, payload);
   }
+}
+
+function stringifyWebhookPayload(payload) {
+  try {
+    return JSON.stringify(payload ?? {}, null, 2);
+  } catch {
+    return JSON.stringify({ error: "payload_not_serializable" }, null, 2);
+  }
+}
+
+function buildWebhookPayloadPreview(payloadString, maxLength = 1500) {
+  if (payloadString.length <= maxLength) {
+    return payloadString;
+  }
+
+  return `${payloadString.slice(0, maxLength)}\n... [TRUNCATED]`;
+}
+
+async function sendErlcEventWebhookToDiscord(payload, meta = {}) {
+  const channelId = config.erlcEventWebhookChannelId;
+  if (!channelId) {
+    throw new Error("ERLC_EVENT_WEBHOOK_CHANNEL_ID is not configured.");
+  }
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel || typeof channel.send !== "function") {
+    throw new Error("Configured ERLC event webhook channel is invalid or inaccessible.");
+  }
+
+  const payloadString = stringifyWebhookPayload(payload);
+  const preview = buildWebhookPayloadPreview(payloadString);
+  const eventType = String(
+    meta.eventType ||
+    payload?.eventType ||
+    payload?.type ||
+    payload?.event ||
+    "unknown"
+  ).trim() || "unknown";
+
+  const attachment = new AttachmentBuilder(Buffer.from(payloadString, "utf8"), {
+    name: `erlc-event-${Date.now()}.json`
+  });
+
+  await channel.send({
+    content: [
+      "🚨 **ER:LC Event Webhook**",
+      `**النوع:** \`${eventType}\``,
+      `**الوقت:** <t:${Math.floor(Date.now() / 1000)}:F>`,
+      "",
+      "```json",
+      preview,
+      "```"
+    ].join("\n"),
+    files: [attachment]
+  });
 }
 
 const FINE_PAYMENTS_LOG_CHANNEL_ID = "1498637248701403207";
@@ -13125,6 +13181,42 @@ registerWebsiteRoutes(app, {
   findGuildMemberForWebsiteAccess
 });
 
+app.get("/", (req, res) => {
+  return res.status(200).send("Server Online");
+});
+
+app.post(["/webhook", "/erlc/event-webhook"], async (req, res) => {
+  try {
+    if (req.headers["x-webhook-key"] !== config.erlcWebhookKey) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const payload = req.body ?? {};
+    const eventType = String(
+      payload?.eventType ||
+      payload?.type ||
+      payload?.event ||
+      "unknown"
+    ).trim() || "unknown";
+
+    console.log("[ER:LC EVENT WEBHOOK]", JSON.stringify({
+      eventType,
+      payload
+    }));
+
+    await sendErlcEventWebhookToDiscord(payload, { eventType });
+
+    return res.status(200).json({
+      ok: true,
+      endpoint: "event-webhook",
+      eventType
+    });
+  } catch (error) {
+    console.error("ER:LC event webhook failure:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 app.post("/erlc/robbery-success", async (req, res) => {
   try {
     if (req.headers["x-webhook-key"] !== config.erlcWebhookKey) {
@@ -13495,5 +13587,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
 
