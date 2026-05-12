@@ -13185,28 +13185,41 @@ app.get("/", (req, res) => {
   return res.status(200).send("Server Online");
 });
 
-app.get(["/webhook", "/erlc/event-webhook"], (req, res) => {
-  return res.status(200).json({
-    ok: true,
-    service: "arab-world-bot-webhook",
-    endpoint: "event-webhook"
-  });
-});
-
-app.post(["/webhook", "/erlc/event-webhook"], async (req, res) => {
+app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
   try {
     const headerKey = String(req.headers["x-webhook-key"] || "").trim();
     const queryKey = String(req.query?.key || req.query?.token || "").trim();
+    const method = String(req.method || "GET").toUpperCase();
     const isAuthorized =
       !config.erlcWebhookKey ||
       headerKey === config.erlcWebhookKey ||
       queryKey === config.erlcWebhookKey;
 
-    if (!isAuthorized) {
-      return res.status(401).json({ ok: false, error: "unauthorized" });
+    if (method !== "POST") {
+      return res.status(200).json({
+        ok: true,
+        service: "arab-world-bot-webhook",
+        endpoint: "event-webhook",
+        method
+      });
     }
 
     const payload = req.body ?? {};
+    const hasPayload = payload && typeof payload === "object" && Object.keys(payload).length > 0;
+
+    if (!isAuthorized && hasPayload) {
+      console.warn("[ER:LC EVENT WEBHOOK] Unauthorized payload rejected.");
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    if (!hasPayload) {
+      return res.status(200).json({
+        ok: true,
+        endpoint: "event-webhook",
+        probe: true
+      });
+    }
+
     const eventType = String(
       payload?.eventType ||
       payload?.type ||
@@ -13219,7 +13232,9 @@ app.post(["/webhook", "/erlc/event-webhook"], async (req, res) => {
       payload
     }));
 
-    await sendErlcEventWebhookToDiscord(payload, { eventType });
+    void sendErlcEventWebhookToDiscord(payload, { eventType }).catch((error) => {
+      console.error("ER:LC event webhook discord forwarding failure:", error);
+    });
 
     return res.status(200).json({
       ok: true,
@@ -13602,3 +13617,5 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
+
