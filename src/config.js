@@ -33,6 +33,7 @@ export const config = {
   token: process.env.DISCORD_TOKEN,
   clientId: process.env.DISCORD_CLIENT_ID,
   guildId: process.env.DISCORD_GUILD_ID,
+  erlcEventWebhookChannelId: process.env.ERLC_EVENT_WEBHOOK_CHANNEL_ID,
   loanChannelId: process.env.BANK_LOAN_CHANNEL_ID,
   auditChannelId: process.env.BANK_AUDIT_CHANNEL_ID,
   serviceHoldRequestChannelId: process.env.SERVICE_HOLD_REQUEST_CHANNEL_ID,
