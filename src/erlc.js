@@ -189,6 +189,8 @@ const recentPunishments = new Map();
 let commandQueue = Promise.resolve();
 let erlcReadRateLimitUntil = 0;
 let lastReadRateLimitLogAt = 0;
+let erlcTemporaryFailureUntil = 0;
+let lastTemporaryFailureLogAt = 0;
 
 async function sendErlcCommand(command) {
   if (!config.erlcApiBaseUrl || !config.erlcApiKey) {
@@ -247,7 +249,7 @@ async function fetchErlcCollection(endpoint, label, collectionKeys = []) {
     return [];
   }
 
-  if (Date.now() < erlcReadRateLimitUntil) {
+  if (Date.now() < erlcReadRateLimitUntil || Date.now() < erlcTemporaryFailureUntil) {
     return [];
   }
 
@@ -278,6 +280,20 @@ async function fetchErlcCollection(endpoint, label, collectionKeys = []) {
       if (Date.now() - lastReadRateLimitLogAt > 15000) {
         console.warn(`ER:LC ${label} rate limited. Pausing read polls for ${Math.ceil(retryDelayMs / 1000)}s.`);
         lastReadRateLimitLogAt = Date.now();
+      }
+
+      return [];
+    }
+
+    if ([500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527].includes(response.status)) {
+      const retryDelayMs = 30 * 1000;
+      erlcTemporaryFailureUntil = Date.now() + retryDelayMs;
+
+      if (Date.now() - lastTemporaryFailureLogAt > 15000) {
+        console.warn(
+          `ER:LC ${label} temporarily unavailable (status ${response.status}). Pausing read polls for ${Math.ceil(retryDelayMs / 1000)}s.`
+        );
+        lastTemporaryFailureLogAt = Date.now();
       }
 
       return [];
