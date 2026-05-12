@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -92,10 +92,8 @@ export function buildAccountInfoEmbedPolished(account, member) {
     ? account.ownedVehicles
     : fallbackOwnedVehicles;
   const carsCount = ownedVehicles.length;
-  const recentTransactions = Array.isArray(account.recentTransactions) ? account.recentTransactions : [];
-  const weapons = Object.entries(account.weapons ?? {})
-    .filter(([, value]) => value)
-    .map(([key, value]) => `${key.toUpperCase()}${value.active === false ? " (غير نشط)" : ""}`);
+  const weaponLines = Array.isArray(account.weaponLines) ? account.weaponLines : [];
+  const transactionLines = Array.isArray(account.transactionLines) ? account.transactionLines : [];
 
   return new EmbedBuilder()
     .setColor(COLORS.navy)
@@ -110,7 +108,12 @@ export function buildAccountInfoEmbedPolished(account, member) {
       { name: "🌍 البلد", value: `**${account.country || "غير مسجل"}**`, inline: true },
       { name: "🎂 العمر", value: `**${account.age || "غير مسجل"}**`, inline: true },
       { name: "🚗 عدد المركبات", value: `**${carsCount}**`, inline: true },
-      { name: "🔫 الأسلحة", value: weapons.length ? `**${weapons.join("، ")}**` : "**لا يوجد**", inline: false },
+      { name: "🔫 عدد الأسلحة", value: `**${weaponLines.length}**`, inline: true },
+      {
+        name: "🧷 تفاصيل الأسلحة",
+        value: weaponLines.length ? weaponLines.join("\n").slice(0, 1024) : "**لا يوجد أسلحة مسجلة**",
+        inline: false
+      },
       {
         name: "🚘 المركبات المملوكة",
         value: ownedVehicles.length ? ownedVehicles.map((vehicle) => `• **${vehicle.name}**`).join("\n").slice(0, 1024) : "**لا توجد مركبات مسجلة**",
@@ -130,14 +133,8 @@ export function buildAccountInfoEmbedPolished(account, member) {
       },
       {
         name: "🧾 آخر العمليات",
-        value: recentTransactions.length
-          ? recentTransactions
-            .map((entry) => {
-              const directionIcon = entry.direction === "credit" ? "➕" : entry.direction === "debit" ? "➖" : "•";
-              return `${directionIcon} **${entry.type || "عملية"}** — **${formatCurrency(entry.amount || 0)}**`;
-            })
-            .join("\n")
-            .slice(0, 1024)
+        value: transactionLines.length
+          ? transactionLines.join("\n").slice(0, 1024)
           : "**لا توجد عمليات حديثة**",
         inline: false
       },
