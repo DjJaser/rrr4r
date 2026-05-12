@@ -210,6 +210,15 @@ const buildResourceRewardCardAttachment = resourceCardModule.buildResourceReward
 assertConfig();
 
 const POLICE_BANK_LOG_CHANNEL_ID = "1494454338255323216";
+const TRANSFERS_LOG_CHANNEL_ID = "1503716692503822376";
+const BANK_ACCOUNT_CREATIONS_LOG_CHANNEL_ID = "1503716732534259783";
+const RESOURCE_PURCHASES_LOG_CHANNEL_ID = "1503716771851665448";
+const ADMIN_COMMANDS_LOG_CHANNEL_ID = "1503716845407178883";
+const RESOURCES_GENERAL_LOG_CHANNEL_ID = "1503716884443562084";
+const CARS_LOG_CHANNEL_ID = "1503716913849696366";
+const WEAPONS_LOG_CHANNEL_ID = "1503716941754536087";
+const CRAFTING_LOG_CHANNEL_ID = "1503716986612482158";
+const WEBSITE_LOG_CHANNEL_ID = "1503717012315308123";
 const POLICE_BANK_ROLE_ID = "1498009237303988345";
 const PROJECTS_SUPER_ROLE_ID = "1467541901648330848";
 const WEBSITE_NAME_CHANGE_REQUEST_CHANNEL_ID = "1499371497574105099";
@@ -1678,7 +1687,7 @@ async function processWebsiteBankTransfer({
   const senderAfter = transferCommit.senderAfter;
   const targetAfter = transferCommit.targetAfter;
 
-  await sendAuditLog(client, config.auditChannelId, {
+  await sendSystemLogs([TRANSFERS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
     title: "🌐 **تحويل بنكي من الموقع**",
     description: "**تم تنفيذ تحويل بنكي عبر الموقع بنجاح.**",
     fields: [
@@ -1855,7 +1864,7 @@ async function processWebsiteCarPurchase({
     return purchaseCommit?.ok === false ? purchaseCommit : { ok: false, error: "vehicle_store_failed" };
   }
 
-  await sendAuditLog(client, config.auditChannelId, {
+  await sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
     title: "🌐 **شراء مركبة من الموقع**",
     description: "**تم شراء مركبة عبر الموقع وخصم قيمتها من الرصيد البنكي بنجاح.**",
     fields: [
@@ -1953,7 +1962,7 @@ async function processWebsiteCarSale({
     return saleCommit?.ok === false ? saleCommit : { ok: false, error: "account_not_found" };
   }
 
-  await sendAuditLog(client, config.auditChannelId, {
+  await sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
     title: "🌐 **بيع مركبة من الموقع**",
     description: "**تم بيع مركبة عبر الموقع وإرجاع 50% من قيمتها إلى الحساب البنكي بنجاح.**",
     fields: [
@@ -2846,6 +2855,51 @@ function buildWeaponStatusText(entry) {
   return `مؤقت • الجودة ${qualityText} • القتلات ${Number(entry.killCount || 0)}`;
 }
 
+function buildAccountInfoWeaponLines(account) {
+  return getAllWeaponInventoryEntries(account)
+    .filter((entry) => entry.active !== false && !entry.brokenAt)
+    .map((entry) => `• **${entry.weaponLabel}** • \`${entry.code}\` • ${buildWeaponStatusText(entry)}`);
+}
+
+function formatAccountInfoTransactionLine(entry = {}) {
+  const amountText = formatCurrency(entry.amount || 0);
+  const targetUserId = entry.metadata?.targetUserId;
+  const sourceUserId = entry.metadata?.sourceUserId;
+  const targetAccountNumber = entry.metadata?.targetAccountNumber;
+  const sourceAccountNumber = entry.metadata?.sourceAccountNumber;
+  const vehicleName = entry.metadata?.vehicleName;
+  const weaponKey = entry.metadata?.weaponKey;
+  const resourceKey = entry.metadata?.resourceKey;
+  const quantity = entry.metadata?.quantity;
+
+  switch (entry.type) {
+    case "transfer_sent":
+    case "website_transfer_sent":
+      return `➖ **تحويل صادر** إلى **${targetUserId ? `<@${targetUserId}>` : targetAccountNumber || "غير معروف"}** بمبلغ **${amountText}**`;
+    case "transfer_received":
+    case "website_transfer_received":
+      return `➕ **تحويل وارد** من **${sourceUserId ? `<@${sourceUserId}>` : sourceAccountNumber || "غير معروف"}** بمبلغ **${amountText}**`;
+    case "manual_add":
+      return `➕ **إضافة إدارية** بمبلغ **${amountText}**`;
+    case "manual_remove":
+      return `➖ **سحب إداري** بمبلغ **${amountText}**`;
+    case "website_vehicle_purchase":
+      return `🚘 **شراء مركبة من الموقع**: **${vehicleName || "غير معروف"}** مقابل **${amountText}**`;
+    case "website_vehicle_sale":
+      return `🚘 **بيع مركبة من الموقع**: **${vehicleName || "غير معروف"}** واستلام **${amountText}**`;
+    case "weapon_purchase":
+      return `🔫 **شراء سلاح** بمبلغ **${amountText}**`;
+    case "weapon_craft":
+      return `🛠️ **تصنيع سلاح**${weaponKey ? ` • ${String(weaponKey).toUpperCase()}` : ""} بمبلغ **${amountText}**`;
+    case "resource_purchase":
+      return `📦 **شراء موارد**${resourceKey ? ` • ${resourceKey}` : ""}${quantity ? ` • الكمية ${quantity}` : ""} بمبلغ **${amountText}**`;
+    case "account_created":
+      return `🏦 **إنشاء حساب بنكي** برصيد افتتاحي **${amountText}**`;
+    default:
+      return `• **${entry.type || "عملية"}** — **${amountText}**`;
+  }
+}
+
 function getFutureTemporaryWeapons(account, weaponKey) {
   return getWeaponInventory(account, weaponKey)
     .filter((entry) => entry.active !== false && !entry.brokenAt && entry.expiresAt)
@@ -3422,8 +3476,11 @@ async function pollActiveVehicles() {
     const ownsVehicle = verifiedOwnerAccount?.discordUserId
       ? userOwnsVehicle(verifiedOwnerAccount.discordUserId, canonicalVehicleName)
       : false;
+    const ownsVehicleByRawName = verifiedOwnerAccount?.discordUserId
+      ? userOwnsVehicle(verifiedOwnerAccount.discordUserId, parsed.vehicleName)
+      : false;
 
-    if (ownsVehicle) {
+    if (ownsVehicle || ownsVehicleByRawName) {
       processedVehicleIds.set(uniqueKey, Date.now());
       continue;
     }
@@ -4259,8 +4316,25 @@ function robloxUsernamesStrictlyMatchForOwnership(left, right) {
   return normalizedLeft === normalizedRight;
 }
 
+function findAccountByRobloxUsernameForOwnership(robloxUsername) {
+  const directMatch = findAccountByRobloxUsername(robloxUsername);
+  if (directMatch?.discordUserId) {
+    return directMatch;
+  }
+
+  const normalizedTarget = normalizeRobloxUsernameForOwnership(robloxUsername);
+  if (!normalizedTarget) {
+    return null;
+  }
+
+  return Object.values(allAccounts()).find((account) =>
+    account?.discordUserId
+    && robloxUsernamesStrictlyMatchForOwnership(account.robloxUsername, normalizedTarget)
+  ) ?? null;
+}
+
 async function resolveLinkedVehicleOwnerAccount(guild, ownerUsername, vehicleName) {
-  let linkedAccount = findAccountByRobloxUsername(ownerUsername);
+  let linkedAccount = findAccountByRobloxUsernameForOwnership(ownerUsername);
   if (linkedAccount?.discordUserId) {
     return {
       account: linkedAccount,
@@ -4415,6 +4489,20 @@ function isAccountBankFrozen(account) {
 
 async function sendPoliceBankLog(payload) {
   await sendAuditLog(client, POLICE_BANK_LOG_CHANNEL_ID, payload);
+}
+
+async function sendSystemLog(channelId, payload) {
+  if (!channelId) {
+    return;
+  }
+
+  await sendAuditLog(client, channelId, payload);
+}
+
+async function sendSystemLogs(channelIds, payload) {
+  for (const channelId of [...new Set(channelIds.filter(Boolean))]) {
+    await sendSystemLog(channelId, payload);
+  }
 }
 
 const FINE_PAYMENTS_LOG_CHANNEL_ID = "1498637248701403207";
@@ -7705,7 +7793,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(ADMIN_COMMANDS_LOG_CHANNEL_ID, {
           title: "🏦 **حذف حساب بنكي نهائيًا**",
           description: "**تم حذف الحساب البنكي نهائيًا من النظام ويمكن لصاحبه إنشاء حساب جديد لاحقًا.**",
           fields: [
@@ -7741,7 +7829,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           source: "admin_add"
         });
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLogs([ADMIN_COMMANDS_LOG_CHANNEL_ID, CARS_LOG_CHANNEL_ID], {
           title: "🚗 **إضافة مركبة يدويًا**",
           description: "**تمت إضافة مركبة إلى ممتلكات أحد الأعضاء يدويًا.**",
           fields: [
@@ -7767,7 +7855,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLogs([ADMIN_COMMANDS_LOG_CHANNEL_ID, CARS_LOG_CHANNEL_ID], {
           title: "🧾 **سحب مركبة يدويًا**",
           description: "**تم سحب مركبة من ممتلكات أحد الأعضاء.**",
           fields: [
@@ -7800,7 +7888,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         setVehiclePrice(vehicleName, price);
         invalidateVehicleCatalogCache();
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLogs([ADMIN_COMMANDS_LOG_CHANNEL_ID, CARS_LOG_CHANNEL_ID], {
           title: "💵 **تحديث سعر مركبة**",
           description: "**تم تحديث سعر مركبة داخل المعرض.**",
           fields: [
@@ -7919,7 +8007,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(ADMIN_COMMANDS_LOG_CHANNEL_ID, {
           title: interaction.commandName === "add-money" ? "💰 **إضافة فلوس يدويًا**" : "🏦 **خصم فلوس يدويًا**",
           description: "**تم تنفيذ عملية إدارية على الرصيد البنكي وتوثيقها بنجاح.**",
           fields: [
@@ -8026,27 +8114,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "معلومات") {
+        await interaction.deferReply({ ephemeral: true });
+
         const member = interaction.options.getUser("member", true);
         const account = requireAccount(member.id);
 
         if (!account) {
-          await interaction.reply({
-            content: "لا يوجد لهذا الشخص حساب بنكي مسجل.",
-            ephemeral: true
+          await interaction.editReply({
+            content: "لا يوجد لهذا الشخص حساب بنكي مسجل."
           });
           return;
         }
 
         const ownedVehicles = listOwnedVehicles(member.id);
-        const recentTransactions = listTransactionsForUser(member.id, 8);
+        const recentTransactions = listTransactionsForUser(member.id, 12);
+        const weaponLines = buildAccountInfoWeaponLines(account);
+        const transactionLines = recentTransactions.map((entry) => formatAccountInfoTransactionLine(entry));
 
-        await interaction.reply({
+        await interaction.editReply({
           embeds: [buildAccountInfoEmbedPolished({
             ...account,
             ownedVehicles,
-            recentTransactions
+            recentTransactions,
+            weaponLines,
+            transactionLines
           }, `<@${member.id}>`)],
-          ephemeral: true
         });
         return;
       }
@@ -10170,7 +10262,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           metadata: { levelKey }
         });
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(CRAFTING_LOG_CHANNEL_ID, {
           title: "🛠️ **شراء طاولة تصنيع**",
           description: "**تم شراء طاولة تصنيع مستوى أول بعد اجتياز الاختبار.**",
           fields: [
@@ -10344,7 +10436,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
         }
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLogs([WEAPONS_LOG_CHANNEL_ID, CRAFTING_LOG_CHANNEL_ID], {
           title: "🔧 **تصنيع سلاح**",
           description: "**تم تصنيع سلاح عبر طاولة التصنيع وخصم قيمته وموارده.**",
           fields: [
@@ -10683,7 +10775,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } catch (error) {
           console.error("Failed to add M9 role after purchase:", error);
         }
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(WEAPONS_LOG_CHANNEL_ID, {
           title: "🔫 **شراء سلاح M9**",
           description: "**تم شراء السلاح بنجاح وخصم قيمته وموارده من الحساب البنكي.**",
           fields: [
@@ -10842,7 +10934,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const senderAfter = transferCommit.senderAfter;
         const targetAfter = transferCommit.targetAfter;
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(TRANSFERS_LOG_CHANNEL_ID, {
           title: "💸 **تحويل بنكي ناجح**",
           description: "**تم تنفيذ عملية تحويل بنكي بين عضوين بنجاح.**",
           fields: [
@@ -11987,7 +12079,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             accountNumber: account.accountNumber
           }
         });
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(BANK_ACCOUNT_CREATIONS_LOG_CHANNEL_ID, {
           title: "🏦 **إنشاء حساب بنكي**",
           description: "**تم فتح حساب بنكي جديد داخل Arab World Bank.**",
           fields: [
@@ -12624,7 +12716,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ]
         }).catch(() => null);
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(RESOURCES_GENERAL_LOG_CHANNEL_ID, {
           title: "📦 **تحويل موارد**",
           description: "**تم تحويل موارد بين حسابين بنجاح.**",
           fields: [
@@ -12785,7 +12877,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ]
         }).catch(() => null);
 
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLog(WEAPONS_LOG_CHANNEL_ID, {
           title: "🔫 **تحويل سلاح بين الأعضاء**",
           description: "**تم نقل سلاح من عضو إلى عضو آخر مع الحفاظ على حالته ومدة صلاحيته.**",
           fields: [
@@ -12862,7 +12954,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             quantity
           }
         });
-        await sendAuditLog(client, config.auditChannelId, {
+        await sendSystemLogs([RESOURCE_PURCHASES_LOG_CHANNEL_ID, RESOURCES_GENERAL_LOG_CHANNEL_ID], {
           title: "⛏️ **شراء مورد من المتجر**",
           description: "**تمت عملية شراء مورد وخصم قيمته من الحساب البنكي بنجاح.**",
           fields: [
