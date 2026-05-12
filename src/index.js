@@ -1,6 +1,6 @@
 import express from "express";
 import fs from "fs";
-import { createPublicKey, verify as verifySignature } from "crypto";
+import { createHash, createPublicKey, verify as verifySignature } from "crypto";
 import {
   ActivityType,
   ActionRowBuilder,
@@ -227,6 +227,7 @@ const CARS_LOG_CHANNEL_ID = "1503716913849696366";
 const WEAPONS_LOG_CHANNEL_ID = "1503716941754536087";
 const CRAFTING_LOG_CHANNEL_ID = "1503716986612482158";
 const WEBSITE_LOG_CHANNEL_ID = "1503717012315308123";
+const TRAFFIC_SIGNAL_VIOLATIONS_LOG_CHANNEL_ID = "1499371497574105099";
 const POLICE_BANK_ROLE_ID = "1498009237303988345";
 const PROJECTS_SUPER_ROLE_ID = "1467541901648330848";
 const WEBSITE_NAME_CHANGE_REQUEST_CHANNEL_ID = "1499371497574105099";
@@ -236,6 +237,8 @@ const DEFAULT_BANK_TRANSFER_LIMIT = 100000;
 const GOLD_BANK_TRANSFER_LIMIT = 500000;
 const activeFinesViewMessages = new Map();
 const processedRobberyCallIds = new Set();
+const processedErlcWebhookEventIds = new Map();
+const redLightViolationState = new Map();
 const pendingRobloxProfileLookups = new Map();
 const pendingActivationDrafts = new Map();
 const pendingActivationRequests = new Map();
@@ -1550,6 +1553,21 @@ function buildRobberySuccessDmEmbed({ robberyType, reward, afterBalance, robloxU
     .setTimestamp();
 }
 
+function buildRobberyFailureDmEmbed({ robberyType, robloxUsername, location = "" }) {
+  return new EmbedBuilder()
+    .setColor(0x8d1111)
+    .setTitle("🚨 **سرقة فاشلة**")
+    .setDescription("**تم تسجيل محاولة سرقة فاشلة، ولم يتم تحويل أي مبلغ إلى حسابك البنكي.**")
+    .addFields(
+      { name: "🧾 **نوع السرقة**", value: `**${getRobberyDisplayLabel(robberyType)}**`, inline: true },
+      { name: "🎮 **يوزر روبلوكس**", value: `**${robloxUsername || "غير معروف"}**`, inline: true },
+      { name: "📌 **النتيجة**", value: "**لم يتم تحويل أي مكافأة**", inline: true },
+      ...(location ? [{ name: "📍 **الموقع**", value: `**${location}**`, inline: false }] : [])
+    )
+    .setFooter({ text: "Arab World • تنبيه السرقة" })
+    .setTimestamp();
+}
+
 function buildWebsiteCarPurchaseDmEmbed({ account, vehicleName, price, beforeBalance, afterBalance }) {
   return new EmbedBuilder()
     .setColor(0x1f6b45)
@@ -2031,6 +2049,19 @@ async function processRobberyReward({
       sourceLabel,
       reason: account ? "" : "لا يوجد حساب بنكي مربوط بهذا اليوزر"
     });
+
+    if (account?.discordUserId) {
+      await client.users.fetch(account.discordUserId).then((user) => user.send({
+        embeds: [
+          buildRobberyFailureDmEmbed({
+            robberyType: normalizedType,
+            robloxUsername,
+            location
+          })
+        ]
+      }).catch(() => null)).catch(() => null);
+    }
+
     return { ok: true, success: false, robberyType: normalizedType };
   }
 
@@ -2369,6 +2400,128 @@ function extractWeaponEventPayload(body = {}) {
     robloxUsername: String(robloxUsername || "").trim(),
     weaponCode: String(weaponCode || "").trim().toUpperCase()
   };
+}
+
+function extractWebhookEventPayload(body = {}) {
+  if (body?.data && typeof body.data === "object") {
+    return body.data;
+  }
+  if (body?.payload && typeof body.payload === "object") {
+    return body.payload;
+  }
+  if (body?.eventData && typeof body.eventData === "object") {
+    return body.eventData;
+  }
+  return body;
+}
+
+function collectWebhookTextParts(value, bucket = []) {
+  if (value == null) {
+    return bucket;
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    bucket.push(String(value));
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectWebhookTextParts(entry, bucket);
+    }
+    return bucket;
+  }
+
+  if (typeof value === "object") {
+    for (const [key, entry] of Object.entries(value)) {
+      bucket.push(String(key));
+      collectWebhookTextParts(entry, bucket);
+    }
+  }
+
+  return bucket;
+}
+
+function buildWebhookTextBlob(payload = {}) {
+  return collectWebhookTextParts(payload, []).join(" ").toLowerCase();
+}
+
+function extractWebhookRobloxUsername(payload = {}) {
+  return extractRobloxName(firstString(
+    payload.robloxUsername,
+    payload.robloxUser,
+    payload.username,
+    payload.user,
+    payload.userName,
+    payload.player,
+    payload.playerName,
+    payload.Player,
+    payload.PlayerName,
+    payload.owner,
+    payload.Owner,
+    payload.caller,
+    payload.Caller,
+    payload.by,
+    payload.By
+  ));
+}
+
+function buildWebhookEventFingerprint(payload = {}) {
+  const normalized = JSON.stringify(payload ?? {});
+  return createHash("sha1").update(normalized).digest("hex");
+}
+
+function rememberWebhookEventFingerprint(fingerprint) {
+  const now = Date.now();
+  processedErlcWebhookEventIds.set(fingerprint, now);
+
+  for (const [key, timestamp] of processedErlcWebhookEventIds.entries()) {
+    if (now - timestamp > 10 * 60 * 1000) {
+      processedErlcWebhookEventIds.delete(key);
+    }
+  }
+}
+
+function hasProcessedWebhookEventFingerprint(fingerprint) {
+  const timestamp = processedErlcWebhookEventIds.get(fingerprint) || 0;
+  return Date.now() - timestamp <= 10 * 60 * 1000;
+}
+
+function payloadLooksLikeWeaponEvent(payload = {}, textBlob = "") {
+  const normalizedWeapon = normalizeWeaponCode(
+    payload.weaponCode || payload.weapon || payload.item || payload.itemName || payload.tool || ""
+  );
+
+  if (!normalizedWeapon) {
+    return false;
+  }
+
+  return /weapon|gun|firearm|equip|equipped|draw|drawn|pulled|purchase|purchased|bought|boughtweapon|loadout/i.test(textBlob);
+}
+
+function payloadLooksLikeTrafficSignalViolation(payload = {}, textBlob = "") {
+  if (typeof payload.redLightCount === "number" || typeof payload.signalViolationCount === "number" || typeof payload.violations === "number") {
+    return true;
+  }
+
+  return /redlight|red light|signal violation|traffic signal|ran a red light|cut signal|قطع اشاره|قطع اشارة/i.test(textBlob);
+}
+
+function extractTrafficSignalViolationCount(payload = {}, textBlob = "") {
+  const numericValue = Number(
+    payload.redLightCount ??
+    payload.signalViolationCount ??
+    payload.violations ??
+    payload.count ??
+    payload.total
+  );
+
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return numericValue;
+  }
+
+  const matched = textBlob.match(/(?:count|violations?|red ?lights?)\D{0,8}(\d{1,3})/i);
+  return matched ? Number(matched[1]) : 1;
 }
 
 function normalizeWeaponCode(value) {
@@ -3397,6 +3550,120 @@ async function sendVehicleEnforcementAudit({ ownerUsername, vehicleName, allowed
       { name: "🧾 **النتيجة**", value: `**${reason}**`, inline: false }
     ]
   });
+}
+
+async function handleWeaponEventWebhook(payload = {}) {
+  const guild = await client.guilds.fetch(config.guildId).catch(() => null);
+  if (!guild) {
+    return false;
+  }
+
+  const weaponEvent = extractWeaponEventPayload(payload);
+  const robloxUsername = extractWebhookRobloxUsername(payload) || weaponEvent.robloxUsername;
+  const weaponCode = normalizeWeaponCode(weaponEvent.weaponCode);
+  if (!robloxUsername || (weaponCode !== "M9" && weaponCode !== "COLT")) {
+    return false;
+  }
+
+  const roleIdToVerify = weaponCode === "COLT" ? COLT_ROLE_ID : config.m9RoleId;
+  const result = await verifyWeaponOwnership({
+    guild,
+    robloxUsername,
+    weaponRoleId: roleIdToVerify,
+    memberPrefix: config.guildMemberPrefix
+  });
+
+  await sendWeaponEnforcementAudit({
+    sourceLabel: "event_webhook_weapon",
+    robloxUsername,
+    weaponCode,
+    result
+  });
+
+  return true;
+}
+
+async function handleTrafficSignalViolationWebhook(payload = {}, textBlob = "") {
+  const robloxUsername = extractWebhookRobloxUsername(payload);
+  if (!robloxUsername) {
+    return false;
+  }
+
+  const increment = Math.max(1, extractTrafficSignalViolationCount(payload, textBlob));
+  const state = redLightViolationState.get(robloxUsername) || {
+    count: 0,
+    lastSeenAt: 0,
+    lastAlertAt: 0
+  };
+
+  const now = Date.now();
+  if (now - state.lastSeenAt > 30 * 60 * 1000) {
+    state.count = 0;
+  }
+
+  state.count += increment;
+  state.lastSeenAt = now;
+  redLightViolationState.set(robloxUsername, state);
+
+  if (state.count <= 3 || now - state.lastAlertAt < 10 * 60 * 1000) {
+    return true;
+  }
+
+  const account = findAccountByRobloxUsername(robloxUsername);
+  const mention = account?.discordUserId ? `<@${account.discordUserId}>` : "`غير مربوط`";
+  const location = firstString(payload.location, payload.Location, payload.street, payload.Street, payload.postal, payload.PostalCode);
+
+  await sendSystemLog(TRAFFIC_SIGNAL_VIOLATIONS_LOG_CHANNEL_ID, {
+    title: "🚦 **تجاوز إشارات متكرر**",
+    description: "**تم رصد اللاعب وهو يقطع الإشارة أكثر من ثلاث مرات داخل الماب. هذه مخالفة مرورية وتحتاج متابعة.**",
+    color: 0x8d1111,
+    fields: [
+      { name: "🎮 **يوزر اللاعب**", value: `**${robloxUsername}**`, inline: true },
+      { name: "👤 **الحساب المرتبط**", value: `**${mention}**`, inline: true },
+      { name: "📊 **عدد المرات**", value: `**${state.count}**`, inline: true },
+      { name: "📍 **الموقع**", value: `**${location || "غير معروف"}**`, inline: false },
+      { name: "🧾 **التنبيه**", value: "**قطع أكثر من إشارة ويستحق مخالفة مرورية.**", inline: false }
+    ]
+  });
+
+  state.lastAlertAt = now;
+  redLightViolationState.set(robloxUsername, state);
+  return true;
+}
+
+async function handleGameplayEventWebhook(payload = {}) {
+  const eventPayload = extractWebhookEventPayload(payload);
+  const fingerprint = buildWebhookEventFingerprint(eventPayload);
+  if (hasProcessedWebhookEventFingerprint(fingerprint)) {
+    return;
+  }
+  rememberWebhookEventFingerprint(fingerprint);
+
+  const textBlob = buildWebhookTextBlob(eventPayload);
+  const robberyPayload = extractRobberyEventPayload(eventPayload);
+  if (robberyPayload.robloxUsername && robberyPayload.robberyType && /robbery|سرق/i.test(textBlob)) {
+    await processRobberyReward({
+      robloxUsername: robberyPayload.robloxUsername,
+      robberyType: robberyPayload.robberyType,
+      sourceLabel: "event_webhook",
+      location: firstString(eventPayload.location, eventPayload.Location, eventPayload.place, eventPayload.target),
+      forceSuccess: robberyPayload.success
+    }).catch((error) => {
+      console.error("Failed to process robbery event webhook:", error);
+    });
+  }
+
+  if (payloadLooksLikeWeaponEvent(eventPayload, textBlob)) {
+    await handleWeaponEventWebhook(eventPayload).catch((error) => {
+      console.error("Failed to process weapon event webhook:", error);
+    });
+  }
+
+  if (payloadLooksLikeTrafficSignalViolation(eventPayload, textBlob)) {
+    await handleTrafficSignalViolationWebhook(eventPayload, textBlob).catch((error) => {
+      console.error("Failed to process traffic signal violation webhook:", error);
+    });
+  }
 }
 
 async function pollActiveVehicles() {
@@ -13251,6 +13518,10 @@ app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
       console.error("ER:LC event webhook discord forwarding failure:", error);
     });
 
+    void handleGameplayEventWebhook(payload).catch((error) => {
+      console.error("ER:LC event webhook gameplay handling failure:", error);
+    });
+
     return res.status(200).json({
       ok: true,
       endpoint: "event-webhook",
@@ -13632,4 +13903,6 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
+
 
