@@ -13195,15 +13195,6 @@ app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
       headerKey === config.erlcWebhookKey ||
       queryKey === config.erlcWebhookKey;
 
-    if (method !== "POST") {
-      return res.status(200).json({
-        ok: true,
-        service: "arab-world-bot-webhook",
-        endpoint: "event-webhook",
-        method
-      });
-    }
-
     const payload = req.body ?? {};
     const hasPayload = payload && typeof payload === "object" && Object.keys(payload).length > 0;
 
@@ -13215,7 +13206,8 @@ app.all(["/webhook", "/erlc/event-webhook"], async (req, res) => {
       return res.status(200).json({
         ok: true,
         endpoint: "event-webhook",
-        probe: true
+        probe: true,
+        method
       });
     }
 
@@ -13621,3 +13613,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
