@@ -24,7 +24,17 @@ export function registerWebsiteRoutes(app, deps) {
     processWebsiteCarSale,
     processWebsiteBankTransfer,
     sendWebsiteNameChangeRequest,
-    findGuildMemberForWebsiteAccess
+    findGuildMemberForWebsiteAccess,
+    updateAccount,
+    appendTransaction,
+    getFinesForUser,
+    listAllFines,
+    getFine,
+    updateFine,
+    applyBudgetTransaction,
+    BUDGET_KEYS,
+    getVehicleShowroomMetaRecord,
+    upsertVehicleShowroomMeta
   } = deps;
 
   function isAuthorizedInternalRequest(req) {
@@ -163,18 +173,121 @@ export function registerWebsiteRoutes(app, deps) {
         .filter(Boolean)
     );
 
-    return getSortedVehicleCatalog().map((vehicle) => ({
-      name: vehicle.name,
-      price: Number(vehicle.price || 0),
-      isFree: Boolean(vehicle.isFree),
-      owned: ownedVehicleNames.has(normalizeVehicleName(vehicle.name))
-    }));
+    return getSortedVehicleCatalog()
+      .map((vehicle) => {
+        const meta = getVehicleShowroomMetaRecord(vehicle.name);
+        if (meta?.hidden) {
+          return null;
+        }
+
+        return {
+          name: vehicle.name,
+          price: Number(vehicle.price || 0),
+          isFree: Boolean(vehicle.isFree),
+          owned: ownedVehicleNames.has(normalizeVehicleName(vehicle.name)),
+          image: meta?.image || "",
+          description: meta?.description || "",
+          speed: Number(meta?.speed || 0),
+          acceleration: meta?.acceleration || "",
+          seats: Number(meta?.seats || 4),
+          hidden: Boolean(meta?.hidden)
+        };
+      })
+      .filter(Boolean);
   }
 
   function buildWebsiteProjectsForUser(discordUserId) {
     return listProjects()
       .map((project) => buildWebsiteProjectSnapshot(project, discordUserId))
       .filter((project) => project && project.accessLevel !== "none");
+  }
+
+  function buildWebsiteFineSnapshot(fine = {}) {
+    return {
+      fineId: String(fine.fineId || ""),
+      amount: Number(fine.amount || 0),
+      status: String(fine.status || "unpaid"),
+      reason: String(fine.reason || ""),
+      violationType: String(fine.violationType || ""),
+      officerName: String(fine.officerName || ""),
+      createdAt: fine.createdAt || null
+    };
+  }
+
+  function normalizeLookupValue(value = "") {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^aw\s*\|\s*/i, "")
+      .replace(/\s+/g, " ");
+  }
+
+  async function findAccountByDiscordIdentityText(value = "") {
+    const guild = client?.guilds?.cache?.get?.(config.guildId) || null;
+    const normalized = normalizeLookupValue(value);
+    if (!guild || !normalized) {
+      return null;
+    }
+
+    const mentionMatch = String(value || "").match(/^<@!?(\d{10,20})>$/);
+    if (mentionMatch?.[1]) {
+      return getAccount(mentionMatch[1]);
+    }
+
+    const matchedMember = [...guild.members.cache.values()].find((member) => {
+      const candidateValues = [
+        member.user?.username,
+        member.user?.globalName,
+        member.displayName,
+        member.nickname
+      ];
+
+      return candidateValues.some((candidate) => {
+        const normalizedCandidate = normalizeLookupValue(candidate || "");
+        return Boolean(
+          normalizedCandidate
+          && (
+            normalizedCandidate === normalized
+            || normalizedCandidate.includes(normalized)
+            || normalized.includes(normalizedCandidate)
+          )
+        );
+      });
+    }) || null;
+
+    return matchedMember ? getAccount(matchedMember.id) : null;
+  }
+
+  function doesFineBelongToAccount(fine, account) {
+    if (!fine || !account) {
+      return false;
+    }
+
+    const accountDiscordUserId = String(account.discordUserId || "").trim();
+    const fineTargetUserId = String(fine.targetUserId || "").trim();
+    const accountName = normalizeLookupValue(account.name || "");
+    const accountRobloxUsername = normalizeLookupValue(account.robloxUsername || "");
+    const fineTargetName = normalizeLookupValue(fine.targetName || "");
+
+    return Boolean(
+      (accountDiscordUserId && fineTargetUserId && fineTargetUserId === accountDiscordUserId)
+      || (accountName && fineTargetName && fineTargetName === accountName)
+      || (accountRobloxUsername && fineTargetName && fineTargetName === accountRobloxUsername)
+    );
+  }
+
+  function getWebsiteAccessibleFinesForAccount(account) {
+    const directMatches = getFinesForUser(account.discordUserId).filter(Boolean);
+    const fallbackMatches = listAllFines().filter((fine) => doesFineBelongToAccount(fine, account));
+    const merged = new Map();
+
+    for (const fine of [...directMatches, ...fallbackMatches]) {
+      if (fine?.fineId) {
+        merged.set(String(fine.fineId), fine);
+      }
+    }
+
+    return [...merged.values()];
   }
 
   function createWebsiteVerificationCode() {
@@ -429,7 +542,7 @@ export function registerWebsiteRoutes(app, deps) {
     }
   }
 
-  function resolveWebsiteTransferTarget(payload = {}) {
+  async function resolveWebsiteTransferTarget(payload = {}) {
     const explicitAccountNumber = String(
       payload.targetBankAccountId ||
       payload.targetAccountNumber ||
@@ -455,6 +568,7 @@ export function registerWebsiteRoutes(app, deps) {
       ""
     ).trim();
     const genericTarget = String(payload.target || payload.recipient || "").trim();
+    const mentionMatch = genericTarget.match(/^<@!?(\d{10,20})>$/);
 
     if (explicitAccountNumber) {
       return findAccountByAccountNumber(explicitAccountNumber);
@@ -465,7 +579,9 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     if (explicitName) {
-      return findAccountByName(explicitName);
+      return findAccountByName(explicitName)
+        || findAccountByRobloxUsername(explicitName)
+        || await findAccountByDiscordIdentityText(explicitName);
     }
 
     if (explicitRobloxUsername) {
@@ -476,6 +592,10 @@ export function registerWebsiteRoutes(app, deps) {
       return null;
     }
 
+    if (mentionMatch?.[1]) {
+      return getAccount(mentionMatch[1]);
+    }
+
     if (/^\d{4,6}$/.test(genericTarget)) {
       return findAccountByAccountNumber(genericTarget);
     }
@@ -484,7 +604,9 @@ export function registerWebsiteRoutes(app, deps) {
       return getAccount(genericTarget);
     }
 
-    return findAccountByName(genericTarget) || findAccountByRobloxUsername(genericTarget);
+    return findAccountByName(genericTarget)
+      || findAccountByRobloxUsername(genericTarget)
+      || await findAccountByDiscordIdentityText(genericTarget);
   }
 
   app.get("/web/health", (req, res) => {
@@ -493,6 +615,11 @@ export function registerWebsiteRoutes(app, deps) {
 
   app.post(["/web/showroom-request-code", "/web/mobile-request-code"], async (req, res, next) => {
     try {
+      console.log("[WEBSITE LOGIN] incoming request", JSON.stringify({
+        hasApiKey: Boolean(String(req.headers["x-internal-api-key"] || req.headers["x-api-key"] || "").trim()),
+        body: req.body ?? {}
+      }));
+
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
       }
@@ -506,6 +633,12 @@ export function registerWebsiteRoutes(app, deps) {
       if (!account) {
         return res.status(404).json({ ok: false, error: "account_not_found" });
       }
+
+      console.log("[WEBSITE LOGIN] account resolved", JSON.stringify({
+        robloxUsername,
+        discordUserId: account.discordUserId,
+        accountNumber: account.accountNumber
+      }));
 
       clearOlderWebsiteVerifications(account.discordUserId, account.robloxUsername || robloxUsername);
 
@@ -523,6 +656,13 @@ export function registerWebsiteRoutes(app, deps) {
           expiresAt: deliveryExpiresAt
         })
       );
+
+      console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+        robloxUsername,
+        discordUserId: account.discordUserId,
+        ok: Boolean(deliveryResult?.ok),
+        error: deliveryResult?.error || null
+      }));
 
       if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
         return res.status(409).json({
@@ -1370,7 +1510,7 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: "missing_transfer_fields" });
       }
 
-      const targetAccount = resolveWebsiteTransferTarget(req.body ?? {});
+      const targetAccount = await resolveWebsiteTransferTarget(req.body ?? {});
       if (!targetAccount) {
         return res.status(404).json({ ok: false, error: "target_account_not_found" });
       }
@@ -1409,6 +1549,52 @@ export function registerWebsiteRoutes(app, deps) {
       });
     } catch (error) {
       console.error("Website account-transfer failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/add-money", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const bankAccountId = String(req.body?.bankAccountId || req.body?.accountNumber || "").trim();
+      const amount = Number(req.body?.amount);
+
+      if (!bankAccountId || !Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ ok: false, error: "missing_add_money_fields" });
+      }
+
+      const account = findAccountByAccountNumber(bankAccountId);
+      if (!account) {
+        return res.status(404).json({ ok: false, error: "account_not_found" });
+      }
+
+      const updated = updateAccount(account.discordUserId, (current) => {
+        current.balance = Number(current.balance || 0) + amount;
+        return current;
+      });
+
+      appendTransaction({
+        discordUserId: account.discordUserId,
+        robloxUsername: updated?.robloxUsername || account.robloxUsername,
+        type: "manual_add",
+        amount,
+        direction: "credit",
+        balanceAfter: Number(updated?.balance || 0),
+        metadata: {
+          source: "website_admin_panel"
+        }
+      });
+
+      return res.status(200).json({
+        ok: true,
+        account: buildWebsiteAccountSnapshot(updated),
+        newBalance: Number(updated?.balance || 0)
+      });
+    } catch (error) {
+      console.error("Website add-money failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
   });
@@ -1481,6 +1667,182 @@ export function registerWebsiteRoutes(app, deps) {
       });
     } catch (error) {
       console.error("Website projects failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/fines", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      const fines = getWebsiteAccessibleFinesForAccount(authResult.account)
+        .map((fine) => buildWebsiteFineSnapshot(fine))
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+      return res.status(200).json({
+        ok: true,
+        account: buildWebsiteAccountSnapshot(authResult.account),
+        fines
+      });
+    } catch (error) {
+      console.error("Website fines failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/pay-fine", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      const fineId = String(req.body?.fineId || "").trim();
+      if (!fineId) {
+        return res.status(400).json({ ok: false, error: "missing_fine_id" });
+      }
+
+      const fine = getFine(fineId);
+      if (!fine || !doesFineBelongToAccount(fine, authResult.account)) {
+        return res.status(404).json({ ok: false, error: "fine_not_found" });
+      }
+
+      if (String(fine.status || "").toLowerCase() === "paid") {
+        return res.status(409).json({ ok: false, error: "fine_already_paid" });
+      }
+
+      if (Boolean(authResult.account.bankFrozen)) {
+        return res.status(403).json({ ok: false, error: "account_frozen" });
+      }
+
+      if (Number(authResult.account.balance || 0) < Number(fine.amount || 0)) {
+        return res.status(400).json({ ok: false, error: "insufficient_balance" });
+      }
+
+      const updatedAccount = updateAccount(authResult.account.discordUserId, (current) => {
+        current.balance = Number(current.balance || 0) - Number(fine.amount || 0);
+        return current;
+      });
+
+      const updatedFine = updateFine(fineId, (current) => {
+        current.status = "paid";
+        current.paidAt = new Date().toISOString();
+        return current;
+      });
+
+      appendTransaction({
+        discordUserId: authResult.account.discordUserId,
+        robloxUsername: updatedAccount?.robloxUsername || authResult.account.robloxUsername,
+        type: "fine_payment",
+        amount: Number(fine.amount || 0),
+        direction: "debit",
+        balanceAfter: Number(updatedAccount?.balance || 0),
+        metadata: {
+          fineId
+        }
+      });
+
+      applyBudgetTransaction({
+        budgetKey: BUDGET_KEYS.police,
+        type: "fine_income",
+        amount: Number(fine.amount || 0),
+        actorUserId: authResult.account.discordUserId,
+        label: "دخل مخالفة من الموقع",
+        note: `المخالفة #${fineId}`
+      });
+
+      await client.users.fetch(authResult.account.discordUserId)
+        .then((user) => user.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x1f6b45)
+              .setTitle("✅ تم سداد مخالفة بنجاح")
+              .setDescription("**تم خصم مبلغ المخالفة من حسابك البنكي وتحديث السجل الرسمي داخل البوت.**")
+              .addFields(
+                { name: "🪪 رقم المخالفة", value: `**#${fineId}**`, inline: true },
+                { name: "💵 المبلغ", value: `**${formatCurrency(fine.amount)}**`, inline: true },
+                { name: "💳 الرصيد بعد السداد", value: `**${formatCurrency(updatedAccount?.balance || 0)}**`, inline: true },
+                { name: "📝 السبب", value: `**${fine.reason || "غير محدد"}**`, inline: false }
+              )
+              .setTimestamp()
+          ]
+        }).catch(() => null))
+        .catch(() => null);
+
+      return res.status(200).json({
+        ok: true,
+        message: "تم سداد المخالفة بنجاح",
+        account: buildWebsiteAccountSnapshot(updatedAccount),
+        fine: buildWebsiteFineSnapshot(updatedFine)
+      });
+    } catch (error) {
+      console.error("Website pay-fine failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/admin/showroom-vehicles", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const vehicles = getSortedVehicleCatalog().map((vehicle) => {
+        const meta = getVehicleShowroomMetaRecord(vehicle.name);
+        return {
+          name: vehicle.name,
+          price: Number(vehicle.price || 0),
+          isFree: Boolean(vehicle.isFree),
+          image: meta?.image || "",
+          description: meta?.description || "",
+          speed: Number(meta?.speed || 0),
+          acceleration: meta?.acceleration || "",
+          seats: Number(meta?.seats || 4),
+          hidden: Boolean(meta?.hidden)
+        };
+      });
+
+      return res.status(200).json({ ok: true, vehicles });
+    } catch (error) {
+      console.error("Website admin showroom-vehicles failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/admin/showroom-vehicle-meta", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const vehicleName = String(req.body?.vehicleName || "").trim();
+      if (!vehicleName) {
+        return res.status(400).json({ ok: false, error: "missing_vehicle_name" });
+      }
+
+      const vehicle = upsertVehicleShowroomMeta(vehicleName, {
+        image: req.body?.image,
+        description: req.body?.description,
+        speed: req.body?.speed,
+        acceleration: req.body?.acceleration,
+        seats: req.body?.seats,
+        hidden: req.body?.hidden
+      });
+
+      return res.status(200).json({ ok: true, vehicle });
+    } catch (error) {
+      console.error("Website admin showroom-vehicle-meta failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
   });
