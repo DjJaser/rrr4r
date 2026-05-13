@@ -34,31 +34,96 @@ const defaultStore = {
   vehicleCatalog: [...new Set([...CITIZEN_VEHICLE_NAMES, ...DEFAULT_FREE_VEHICLE_NAMES])]
 };
 
+let storePathLogged = false;
+
+function isValidStoreShape(store) {
+  return Boolean(
+    store
+    && typeof store === "object"
+    && store.accounts
+    && store.pendingPins
+    && store.pendingTransfers
+  );
+}
+
+function tryReadJsonFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+
+    const raw = fs.readFileSync(filePath, "utf8");
+    if (!String(raw || "").trim()) {
+      return null;
+    }
+
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function getMigrationSourceFile() {
+  const candidates = [
+    repoDataFile,
+    legacyDataFile
+  ].filter((candidate, index, array) => candidate && array.indexOf(candidate) === index);
+
+  for (const candidate of candidates) {
+    const parsed = tryReadJsonFile(candidate);
+    if (isValidStoreShape(parsed)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function ensureStore() {
   if (!fs.existsSync(runtimeDataDir)) {
     fs.mkdirSync(runtimeDataDir, { recursive: true });
   }
 
   if (!fs.existsSync(runtimeDataFile)) {
-    const migrationCandidates = [
-      repoDataFile,
-      legacyDataFile
-    ].filter((candidate, index, array) => candidate && array.indexOf(candidate) === index);
-
-    const sourceFile = migrationCandidates.find((candidate) => fs.existsSync(candidate));
+    const sourceFile = getMigrationSourceFile();
     if (sourceFile) {
       fs.copyFileSync(sourceFile, runtimeDataFile);
+      console.info(`[STORE] migrated data file from ${sourceFile} to ${runtimeDataFile}`);
     }
   }
 
   if (!fs.existsSync(runtimeDataFile)) {
     fs.writeFileSync(runtimeDataFile, JSON.stringify(defaultStore, null, 2), "utf8");
+    console.warn(`[STORE] created new empty store at ${runtimeDataFile}`);
+  }
+
+  const runtimeStore = tryReadJsonFile(runtimeDataFile);
+  if (!isValidStoreShape(runtimeStore)) {
+    const sourceFile = getMigrationSourceFile();
+    if (sourceFile && path.resolve(sourceFile) !== path.resolve(runtimeDataFile)) {
+      fs.copyFileSync(sourceFile, runtimeDataFile);
+      console.warn(`[STORE] runtime store was missing or invalid, restored from ${sourceFile}`);
+    } else {
+      fs.writeFileSync(runtimeDataFile, JSON.stringify(defaultStore, null, 2), "utf8");
+      console.warn(`[STORE] runtime store was invalid, recreated default store at ${runtimeDataFile}`);
+    }
+  }
+
+  if (!storePathLogged) {
+    storePathLogged = true;
+    console.info(`[STORE] active store file: ${runtimeDataFile}`);
   }
 }
 
 function readStore() {
   ensureStore();
-  return JSON.parse(fs.readFileSync(runtimeDataFile, "utf8"));
+  const parsed = tryReadJsonFile(runtimeDataFile);
+  if (isValidStoreShape(parsed)) {
+    return parsed;
+  }
+
+  console.warn(`[STORE] failed to parse active store file, falling back to default shape: ${runtimeDataFile}`);
+  return structuredClone(defaultStore);
 }
 
 function writeStore(store) {
