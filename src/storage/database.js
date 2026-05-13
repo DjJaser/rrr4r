@@ -3,8 +3,18 @@ import path from "path";
 import { CITIZEN_VEHICLE_NAMES, DEFAULT_FREE_VEHICLE_NAMES } from "../constants.js";
 import { BUDGET_DEFINITIONS } from "../budget-system.js";
 
-const dataDir = path.resolve(process.cwd(), "data");
-const dataFile = path.join(dataDir, "store.json");
+const configuredDataDir = String(process.env.BOT_DATA_DIR || "").trim();
+const configuredDataFile = String(process.env.BOT_DATA_FILE || "").trim();
+
+const runtimeDataDir = configuredDataDir
+  ? path.resolve(configuredDataDir)
+  : path.resolve(process.cwd(), ".aw-data");
+const runtimeDataFile = configuredDataFile
+  ? path.resolve(configuredDataFile)
+  : path.join(runtimeDataDir, "store.json");
+
+const repoDataDir = path.resolve(process.cwd(), "data");
+const repoDataFile = path.join(repoDataDir, "store.json");
 const legacyDataDir = path.resolve("C:\\Users\\Dell\\Documents\\Codex\\2026-04-23-new-chat\\data");
 const legacyDataFile = path.join(legacyDataDir, "store.json");
 
@@ -25,27 +35,37 @@ const defaultStore = {
 };
 
 function ensureStore() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  if (!fs.existsSync(runtimeDataDir)) {
+    fs.mkdirSync(runtimeDataDir, { recursive: true });
   }
 
-  if (!fs.existsSync(dataFile) && fs.existsSync(legacyDataFile)) {
-    fs.copyFileSync(legacyDataFile, dataFile);
+  if (!fs.existsSync(runtimeDataFile)) {
+    const migrationCandidates = [
+      repoDataFile,
+      legacyDataFile
+    ].filter((candidate, index, array) => candidate && array.indexOf(candidate) === index);
+
+    const sourceFile = migrationCandidates.find((candidate) => fs.existsSync(candidate));
+    if (sourceFile) {
+      fs.copyFileSync(sourceFile, runtimeDataFile);
+    }
   }
 
-  if (!fs.existsSync(dataFile)) {
-    fs.writeFileSync(dataFile, JSON.stringify(defaultStore, null, 2), "utf8");
+  if (!fs.existsSync(runtimeDataFile)) {
+    fs.writeFileSync(runtimeDataFile, JSON.stringify(defaultStore, null, 2), "utf8");
   }
 }
 
 function readStore() {
   ensureStore();
-  return JSON.parse(fs.readFileSync(dataFile, "utf8"));
+  return JSON.parse(fs.readFileSync(runtimeDataFile, "utf8"));
 }
 
 function writeStore(store) {
   ensureStore();
-  fs.writeFileSync(dataFile, JSON.stringify(store, null, 2), "utf8");
+  const tempFile = `${runtimeDataFile}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(store, null, 2), "utf8");
+  fs.renameSync(tempFile, runtimeDataFile);
 }
 
 function buildTransactionRecord(entry) {
