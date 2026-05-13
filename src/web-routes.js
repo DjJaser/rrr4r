@@ -281,6 +281,12 @@ export function registerWebsiteRoutes(app, deps) {
     };
   }
 
+  const softWebsiteDeliveryErrors = new Set([
+    "discord_cached_dm_timeout",
+    "discord_dm_channel_timeout",
+    "discord_dm_send_timeout"
+  ]);
+
   async function sendWebsiteVerificationDm(discordUserId, payload) {
     if (!discordUserId) {
       return { ok: false, error: "discord_user_not_found" };
@@ -518,13 +524,21 @@ export function registerWebsiteRoutes(app, deps) {
         })
       );
 
-      if (!deliveryResult.ok) {
+      if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
         return res.status(409).json({
           ok: false,
           error: deliveryResult.error || "dm_delivery_failed",
           linkedDiscordUserId: account.discordUserId,
           accountNumber: account.accountNumber
         });
+      }
+
+      if (!deliveryResult.ok) {
+        console.warn("[WEBSITE LOGIN] Delivery returned timeout-like error, proceeding as soft success.", JSON.stringify({
+          robloxUsername,
+          discordUserId: account.discordUserId,
+          error: deliveryResult.error || "unknown_delivery_error"
+        }));
       }
 
       const expiresAt = Date.now() + 10 * 60 * 1000;
@@ -537,8 +551,8 @@ export function registerWebsiteRoutes(app, deps) {
         accountNumber: account.accountNumber,
         expiresAt,
         used: false,
-        deliveryStatus: "sent",
-        deliveryError: null,
+        deliveryStatus: deliveryResult.ok ? "sent" : "uncertain",
+        deliveryError: deliveryResult.ok ? null : (deliveryResult.error || null),
         deliveryCompletedAt: new Date().toISOString()
       });
 
