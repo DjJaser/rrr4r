@@ -31,6 +31,7 @@ const defaultStore = {
   fines: {},
   holdRequests: {},
   vehiclePrices: {},
+  vehicleShowroomMeta: {},
   vehicleCatalog: [...new Set([...CITIZEN_VEHICLE_NAMES, ...DEFAULT_FREE_VEHICLE_NAMES])]
 };
 
@@ -321,6 +322,7 @@ function ensureBudgetStoreShape(store) {
 function ensureVehicleStoreShape(store) {
   ensureBudgetStoreShape(store);
   store.vehiclePrices ??= {};
+  store.vehicleShowroomMeta ??= {};
   store.vehicleCatalog ??= [];
 
   for (const vehicleName of [...CITIZEN_VEHICLE_NAMES, ...DEFAULT_FREE_VEHICLE_NAMES]) {
@@ -378,6 +380,7 @@ function ensureProjectStoreShape(store) {
 function ensureVehicleRegistered(store, vehicleName) {
   ensureBudgetStoreShape(store);
   store.vehiclePrices ??= {};
+  store.vehicleShowroomMeta ??= {};
   store.vehicleCatalog ??= [];
   const normalized = normalizeVehicleName(vehicleName);
   if (!normalized) {
@@ -909,6 +912,64 @@ export function listVehicleCatalog() {
     .sort((left, right) => left.localeCompare(right));
 }
 
+export function getVehicleShowroomMetaRecord(vehicleName) {
+  const store = ensureVehicleStoreShape(readStore());
+  const normalized = normalizeVehicleName(vehicleName);
+  if (!normalized) {
+    return null;
+  }
+
+  const record = store.vehicleShowroomMeta[normalized];
+  if (!record) {
+    return null;
+  }
+
+  return {
+    vehicleName: prettifyVehicleName(record.vehicleName || vehicleName),
+    image: String(record.image || "").trim(),
+    description: String(record.description || "").trim(),
+    speed: Number(record.speed || 0),
+    acceleration: String(record.acceleration || "").trim(),
+    seats: Number(record.seats || 4),
+    hidden: Boolean(record.hidden),
+    updatedAt: record.updatedAt || null
+  };
+}
+
+export function upsertVehicleShowroomMeta(vehicleName, metadata = {}) {
+  const store = ensureVehicleStoreShape(readStore());
+  const normalized = normalizeVehicleName(vehicleName);
+  if (!normalized) {
+    return null;
+  }
+
+  const resolvedVehicleName = resolveRegisteredVehicleNameFromStore(store, vehicleName);
+  ensureVehicleRegistered(store, resolvedVehicleName);
+
+  const current = store.vehicleShowroomMeta[normalized] ?? {
+    vehicleName: prettifyVehicleName(resolvedVehicleName)
+  };
+
+  store.vehicleShowroomMeta[normalized] = {
+    ...current,
+    vehicleName: prettifyVehicleName(resolvedVehicleName),
+    image: metadata.image === undefined ? String(current.image || "") : String(metadata.image || "").trim(),
+    description: metadata.description === undefined
+      ? String(current.description || "")
+      : String(metadata.description || "").trim(),
+    speed: metadata.speed === undefined ? Number(current.speed || 0) : Number(metadata.speed || 0),
+    acceleration: metadata.acceleration === undefined
+      ? String(current.acceleration || "")
+      : String(metadata.acceleration || "").trim(),
+    seats: metadata.seats === undefined ? Number(current.seats || 4) : Number(metadata.seats || 4),
+    hidden: metadata.hidden === undefined ? Boolean(current.hidden) : Boolean(metadata.hidden),
+    updatedAt: new Date().toISOString()
+  };
+
+  writeStore(store);
+  return getVehicleShowroomMetaRecord(resolvedVehicleName);
+}
+
 export function setVehiclePrice(vehicleName, price) {
   const store = readStore();
   const normalized = normalizeVehicleName(vehicleName);
@@ -1022,6 +1083,43 @@ export function userOwnsVehicle(userId, vehicleName) {
   }) || Object.values(account.cars ?? {}).some((record) => {
     return areVehicleNamesEquivalent(record?.name, resolvedVehicleName || vehicleName);
   });
+}
+
+export function findOwnedVehicleMatch(userId, vehicleName) {
+  const account = getAccount(userId);
+  if (!account) {
+    return null;
+  }
+
+  const store = ensureVehicleStoreShape(readStore());
+  const resolvedVehicleName = resolveRegisteredVehicleNameFromStore(store, vehicleName);
+  const comparableTarget = normalizeVehicleComparableName(resolvedVehicleName || vehicleName);
+  const lookupKey = normalizeVehicleLookupKey(resolvedVehicleName || vehicleName);
+
+  const records = Object.values(account.cars ?? {}).filter(Boolean);
+  for (const record of records) {
+    if (
+      normalizeVehicleLookupKey(record?.name) === lookupKey
+      || areVehicleNamesEquivalent(record?.name, resolvedVehicleName || vehicleName)
+    ) {
+      return record;
+    }
+
+    const comparableOwned = normalizeVehicleComparableName(record?.name);
+    if (
+      comparableTarget
+      && comparableOwned
+      && (
+        comparableOwned === comparableTarget
+        || comparableOwned.includes(comparableTarget)
+        || comparableTarget.includes(comparableOwned)
+      )
+    ) {
+      return record;
+    }
+  }
+
+  return null;
 }
 
 export function resolveRegisteredVehicleName(vehicleName) {
