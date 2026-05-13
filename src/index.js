@@ -178,14 +178,16 @@ import {
   getHoldRequest,
   getAccount,
   getPendingPin,
+  getVehicleShowroomMetaRecord,
   getVehiclePriceRecord,
   listAllTransactions,
-  listBudgetTransactions,
   listAllFines,
+  listBudgetTransactions,
   listProjects,
   listProjectTransactions,
   listTransactionsForUser,
   listOwnedVehicles,
+  findOwnedVehicleMatch,
   listVehicleCatalog,
   removeFine,
   removeAccountByName,
@@ -194,6 +196,7 @@ import {
   registerVehicleName,
   resolveRegisteredVehicleName,
   setVehiclePrice,
+  upsertVehicleShowroomMeta,
   getProject,
   getMutableAccount,
   upsertProject,
@@ -3748,14 +3751,15 @@ async function pollActiveVehicles() {
       continue;
     }
 
-    const ownsVehicle = verifiedOwnerAccount?.discordUserId
-      ? userOwnsVehicle(verifiedOwnerAccount.discordUserId, canonicalVehicleName)
-      : false;
-    const ownsVehicleByRawName = verifiedOwnerAccount?.discordUserId
-      ? userOwnsVehicle(verifiedOwnerAccount.discordUserId, parsed.vehicleName)
-      : false;
+    const ownedVehicleMatchByCanonical = verifiedOwnerAccount?.discordUserId
+      ? findOwnedVehicleMatch(verifiedOwnerAccount.discordUserId, canonicalVehicleName)
+      : null;
+    const ownedVehicleMatchByRawName = verifiedOwnerAccount?.discordUserId
+      ? findOwnedVehicleMatch(verifiedOwnerAccount.discordUserId, parsed.vehicleName)
+      : null;
+    const ownsVehicle = Boolean(ownedVehicleMatchByCanonical || ownedVehicleMatchByRawName);
 
-    if (ownsVehicle || ownsVehicleByRawName) {
+    if (ownsVehicle) {
       processedVehicleIds.set(uniqueKey, Date.now());
       continue;
     }
@@ -3766,7 +3770,7 @@ async function pollActiveVehicles() {
       ownerUsername,
       vehicleName: canonicalVehicleName,
       allowed: false,
-      reason: "المركبة غير موجودة ضمن ممتلكاته بعد التحقق من الحساب المرتبط وملكية المركبة"
+      reason: `المركبة غير موجودة ضمن ممتلكاته بعد التحقق من الحساب المرتبط. الاسم من الماب: ${parsed.vehicleName || canonicalVehicleName}`
     });
   }
 
@@ -8490,7 +8494,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "معلومات") {
-        await interaction.deferReply({ ephemeral: true });
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
 
         const member = interaction.options.getUser("member", true);
         const account = requireAccount(member.id);
@@ -13472,7 +13479,17 @@ registerWebsiteRoutes(app, {
   processWebsiteCarSale,
   processWebsiteBankTransfer,
   sendWebsiteNameChangeRequest,
-  findGuildMemberForWebsiteAccess
+  findGuildMemberForWebsiteAccess,
+  updateAccount,
+  appendTransaction,
+  getFinesForUser,
+  listAllFines,
+  getFine,
+  updateFine,
+  applyBudgetTransaction,
+  BUDGET_KEYS,
+  getVehicleShowroomMetaRecord,
+  upsertVehicleShowroomMeta
 });
 
 app.get("/", (req, res) => {
@@ -13903,6 +13920,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
-
 
