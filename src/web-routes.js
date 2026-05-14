@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Routes } from "discord.js";
+import { Routes } from "discord.js";
 
 export function registerWebsiteRoutes(app, deps) {
   const {
@@ -471,6 +471,13 @@ export function registerWebsiteRoutes(app, deps) {
     const safeAccountNumber = account?.accountNumber || "غير متوفر";
 
     return {
+      content: [
+        "بوابة Arab World | رمز التحقق",
+        `يوزر روبلوكس: ${safeUsername}`,
+        `رقم الحساب: ${safeAccountNumber}`,
+        `رمز التحقق: ${code}`,
+        `صلاحية الرمز: <t:${Math.floor(expiresAt / 1000)}:R>`
+      ].join("\n"),
       embeds: [
         new EmbedBuilder()
           .setColor(0x0b1f3a)
@@ -512,9 +519,10 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const restEmbeds = Array.isArray(payload?.embeds)
-      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-      : [];
+    const dmPayload = {
+      content: String(payload?.content || "").trim() || "Website verification code requested.",
+      allowedMentions: { parse: [] }
+    };
 
     const attemptViaCachedUser = async () => {
       const cachedUser = getCachedDiscordUser(discordUserId);
@@ -523,7 +531,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => cachedUser.send(payload),
+        () => cachedUser.send(dmPayload),
         15000,
         "discord_cached_dm_timeout"
       );
@@ -543,7 +551,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => fetchedUser.send(payload),
+        () => fetchedUser.send(dmPayload),
         15000,
         "discord_fetched_dm_timeout"
       );
@@ -563,7 +571,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => member.user.send(payload),
+        () => member.user.send(dmPayload),
         15000,
         "discord_member_dm_timeout"
       );
@@ -583,8 +591,7 @@ export function registerWebsiteRoutes(app, deps) {
       await withTimeout(
         () => client.rest.post(Routes.channelMessages(dmChannel.id), {
           body: {
-            content: payload?.content || undefined,
-            embeds: restEmbeds
+            content: dmPayload.content || undefined
           }
         }),
         15000,
@@ -647,9 +654,10 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const restEmbeds = Array.isArray(payload?.embeds)
-      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-      : [];
+    const dmPayload = {
+      content: String(payload?.content || "").trim() || "Website verification code requested.",
+      allowedMentions: { parse: [] }
+    };
 
     const quickAttempts = [
       async () => {
@@ -664,7 +672,7 @@ export function registerWebsiteRoutes(app, deps) {
         }
 
       await withTimeout(
-        () => fetchedUser.send(payload),
+        () => fetchedUser.send(dmPayload),
         1800,
         "discord_fetched_dm_timeout"
       );
@@ -688,8 +696,7 @@ export function registerWebsiteRoutes(app, deps) {
         await withTimeout(
           () => client.rest.post(Routes.channelMessages(dmChannel.id), {
             body: {
-              content: payload?.content || undefined,
-              embeds: restEmbeds
+              content: dmPayload.content || undefined
             }
           }),
           1800,
