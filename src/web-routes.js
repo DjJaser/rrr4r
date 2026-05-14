@@ -519,10 +519,12 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const dmPayload = {
-      content: String(payload?.content || "").trim() || "Website verification code requested.",
-      allowedMentions: { parse: [] }
-    };
+    const restEmbeds = Array.isArray(payload?.embeds)
+      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+      : [];
+    const restComponents = Array.isArray(payload?.components)
+      ? payload.components.map((component) => typeof component?.toJSON === "function" ? component.toJSON() : component)
+      : [];
 
     const attemptViaCachedUser = async () => {
       const cachedUser = getCachedDiscordUser(discordUserId);
@@ -531,7 +533,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => cachedUser.send(dmPayload),
+        () => cachedUser.send(payload),
         15000,
         "discord_cached_dm_timeout"
       );
@@ -551,7 +553,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => fetchedUser.send(dmPayload),
+        () => fetchedUser.send(payload),
         15000,
         "discord_fetched_dm_timeout"
       );
@@ -571,7 +573,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       await withTimeout(
-        () => member.user.send(dmPayload),
+        () => member.user.send(payload),
         15000,
         "discord_member_dm_timeout"
       );
@@ -591,7 +593,9 @@ export function registerWebsiteRoutes(app, deps) {
       await withTimeout(
         () => client.rest.post(Routes.channelMessages(dmChannel.id), {
           body: {
-            content: dmPayload.content || undefined
+            content: payload?.content || undefined,
+            embeds: restEmbeds,
+            components: restComponents
           }
         }),
         15000,
@@ -654,16 +658,18 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const dmPayload = {
-      content: String(payload?.content || "").trim() || "Website verification code requested.",
-      allowedMentions: { parse: [] }
-    };
+    const restEmbeds = Array.isArray(payload?.embeds)
+      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+      : [];
+    const restComponents = Array.isArray(payload?.components)
+      ? payload.components.map((component) => typeof component?.toJSON === "function" ? component.toJSON() : component)
+      : [];
 
     const quickAttempts = [
       async () => {
         const fetchedUser = await withTimeout(
           () => client.users.fetch(discordUserId, { force: true }),
-          1800,
+          3500,
           "discord_user_fetch_timeout"
         );
 
@@ -672,8 +678,8 @@ export function registerWebsiteRoutes(app, deps) {
         }
 
       await withTimeout(
-        () => fetchedUser.send(dmPayload),
-        1800,
+        () => fetchedUser.send(payload),
+        3500,
         "discord_fetched_dm_timeout"
       );
 
@@ -685,21 +691,47 @@ export function registerWebsiteRoutes(app, deps) {
       };
     },
       async () => {
+        const member = await withTimeout(
+          () => findGuildMemberForWebsiteAccess(discordUserId),
+          3500,
+          "guild_member_lookup_timeout"
+        );
+
+        if (!member?.user) {
+          return { ok: false, error: "guild_member_not_found" };
+        }
+
+        await withTimeout(
+          () => member.user.send(payload),
+          3500,
+          "discord_member_dm_timeout"
+        );
+
+        return {
+          ok: true,
+          delivery: "dm_member",
+          targetId: member.user.id,
+          targetTag: member.user.tag || member.user.username || null
+        };
+      },
+      async () => {
         const dmChannel = await withTimeout(
           () => client.rest.post(Routes.userChannels(), {
             body: { recipient_id: discordUserId }
           }),
-          1800,
+          3500,
           "discord_dm_channel_timeout"
         );
 
         await withTimeout(
           () => client.rest.post(Routes.channelMessages(dmChannel.id), {
             body: {
-              content: dmPayload.content || undefined
+              content: payload?.content || undefined,
+              embeds: restEmbeds,
+              components: restComponents
             }
           }),
-          1800,
+          3500,
           "discord_dm_send_timeout"
         );
 
@@ -728,7 +760,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (index < quickAttempts.length - 1) {
-        await delay(150);
+        await delay(250);
       }
     }
 
@@ -858,7 +890,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
-      const deliveryResult = await sendWebsiteVerificationDm(
+      const deliveryResult = await sendWebsiteVerificationDmForLogin(
         account.discordUserId,
         buildWebsiteVerificationDmPayload({
           verificationId,
