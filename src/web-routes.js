@@ -1,4 +1,4 @@
-import { Routes } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Routes } from "discord.js";
 
 export function registerWebsiteRoutes(app, deps) {
   const {
