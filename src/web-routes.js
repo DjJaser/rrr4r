@@ -833,7 +833,16 @@ export function registerWebsiteRoutes(app, deps) {
         code,
         expiresAt
       });
-      const directUser = client?.users?.cache?.get?.(account.discordUserId) || null;
+      const guild = client?.guilds?.cache?.get?.(config.guildId)
+        || await client?.guilds?.fetch?.(config.guildId).catch(() => null);
+      const matchedMember = guild
+        ? await withTimeout(
+            () => findGuildMemberByRobloxUsername(guild, robloxUsername),
+            6000,
+            "guild_member_lookup_timeout"
+          ).catch(() => null)
+        : null;
+      const directUser = matchedMember?.user || client?.users?.cache?.get?.(account.discordUserId) || null;
       const targetUser = directUser || await withTimeout(
         () => client.users.fetch(account.discordUserId, { force: true }),
         5000,
@@ -869,7 +878,7 @@ export function registerWebsiteRoutes(app, deps) {
         discordUserId: account.discordUserId,
         ok: true,
         error: null,
-        deliveryMethod: directUser ? "dm_cache" : "dm_fetch",
+        deliveryMethod: matchedMember?.user ? "dm_member_lookup" : (directUser ? "dm_cache" : "dm_fetch"),
         targetId: targetUser.id || account.discordUserId || null,
         targetTag: targetUser.tag || targetUser.username || null
       }));
@@ -894,7 +903,7 @@ export function registerWebsiteRoutes(app, deps) {
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
         delivery: "dm",
         linkedDiscordUserId: account.discordUserId || null,
-        deliveryMethod: directUser ? "dm_cache" : "dm_fetch"
+        deliveryMethod: matchedMember?.user ? "dm_member_lookup" : (directUser ? "dm_cache" : "dm_fetch")
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
