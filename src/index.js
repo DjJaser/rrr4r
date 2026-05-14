@@ -4561,12 +4561,6 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
     }
   }
 
-  await guild.members.fetch().catch(() => null);
-  const fullCacheMatch = guild.members.cache.find(matchesRobloxName);
-  if (fullCacheMatch) {
-    return fullCacheMatch;
-  }
-
   const linkedAccount = findAccountByRobloxUsername(robloxUsername);
   if (linkedAccount?.discordUserId) {
     const linkedMember = await guild.members.fetch(linkedAccount.discordUserId).catch(() => null);
@@ -14069,4 +14063,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
