@@ -841,7 +841,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
-      const deliveryResult = await sendWebsiteVerificationDmForLogin(
+      const deliveryResult = await sendWebsiteVerificationDm(
         account.discordUserId,
         buildWebsiteVerificationDmPayload({
           verificationId,
