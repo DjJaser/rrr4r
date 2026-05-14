@@ -658,30 +658,14 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const restEmbeds = Array.isArray(payload?.embeds)
-      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-      : [];
-    const restComponents = Array.isArray(payload?.components)
-      ? payload.components.map((component) => typeof component?.toJSON === "function" ? component.toJSON() : component)
-      : [];
+    try {
+      const fetchedUser = await client.users.fetch(discordUserId, { force: true }).catch(() => null);
 
-    const quickAttempts = [
-      async () => {
-        const fetchedUser = await withTimeout(
-          () => client.users.fetch(discordUserId, { force: true }),
-          3500,
-          "discord_user_fetch_timeout"
-        );
+      if (!fetchedUser) {
+        return { ok: false, error: "discord_user_fetch_failed" };
+      }
 
-        if (!fetchedUser) {
-          return { ok: false, error: "discord_user_fetch_failed" };
-        }
-
-      await withTimeout(
-        () => fetchedUser.send(payload),
-        3500,
-        "discord_fetched_dm_timeout"
-      );
+      await fetchedUser.send(payload);
 
       return {
         ok: true,
@@ -689,82 +673,12 @@ export function registerWebsiteRoutes(app, deps) {
         targetId: fetchedUser.id,
         targetTag: fetchedUser.tag || fetchedUser.username || null
       };
-    },
-      async () => {
-        const member = await withTimeout(
-          () => findGuildMemberForWebsiteAccess(discordUserId),
-          3500,
-          "guild_member_lookup_timeout"
-        );
-
-        if (!member?.user) {
-          return { ok: false, error: "guild_member_not_found" };
-        }
-
-        await withTimeout(
-          () => member.user.send(payload),
-          3500,
-          "discord_member_dm_timeout"
-        );
-
-        return {
-          ok: true,
-          delivery: "dm_member",
-          targetId: member.user.id,
-          targetTag: member.user.tag || member.user.username || null
-        };
-      },
-      async () => {
-        const dmChannel = await withTimeout(
-          () => client.rest.post(Routes.userChannels(), {
-            body: { recipient_id: discordUserId }
-          }),
-          3500,
-          "discord_dm_channel_timeout"
-        );
-
-        await withTimeout(
-          () => client.rest.post(Routes.channelMessages(dmChannel.id), {
-            body: {
-              content: payload?.content || undefined,
-              embeds: restEmbeds,
-              components: restComponents
-            }
-          }),
-          3500,
-          "discord_dm_send_timeout"
-        );
-
-        return {
-          ok: true,
-          delivery: "dm_rest",
-          targetId: discordUserId,
-          targetTag: null
-        };
-      }
-    ];
-
-    let lastError = "dm_delivery_failed";
-
-    for (let index = 0; index < quickAttempts.length; index += 1) {
-      try {
-        const result = await quickAttempts[index]();
-        if (result?.ok) {
-          return result;
-        }
-        if (result?.error) {
-          lastError = result.error;
-        }
-      } catch (error) {
-        lastError = error?.message || lastError;
-      }
-
-      if (index < quickAttempts.length - 1) {
-        await delay(250);
-      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || error?.code || "dm_delivery_failed"
+      };
     }
-
-    return { ok: false, error: lastError || "dm_delivery_failed" };
   }
 
   async function withTimeout(promiseFactory, timeoutMs = 5000, timeoutError = "timeout") {
