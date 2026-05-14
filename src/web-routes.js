@@ -543,7 +543,7 @@ export function registerWebsiteRoutes(app, deps) {
     const attemptViaFetchedUser = async () => {
       const fetchedUser = await withTimeout(
         () => client.users.fetch(discordUserId, { force: true }),
-        15000,
+        60000,
         "discord_user_fetch_timeout"
       );
 
