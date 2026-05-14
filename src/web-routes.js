@@ -653,14 +653,19 @@ export function registerWebsiteRoutes(app, deps) {
           return { ok: false, error: "discord_user_fetch_failed" };
         }
 
-        await withTimeout(
-          () => fetchedUser.send(payload),
-          1800,
-          "discord_fetched_dm_timeout"
-        );
+      await withTimeout(
+        () => fetchedUser.send(payload),
+        1800,
+        "discord_fetched_dm_timeout"
+      );
 
-        return { ok: true, delivery: "dm_fetch" };
-      },
+      return {
+        ok: true,
+        delivery: "dm_fetch",
+        targetId: fetchedUser.id,
+        targetTag: fetchedUser.tag || fetchedUser.username || null
+      };
+    },
       async () => {
         const dmChannel = await withTimeout(
           () => client.rest.post(Routes.userChannels(), {
@@ -681,7 +686,12 @@ export function registerWebsiteRoutes(app, deps) {
           "discord_dm_send_timeout"
         );
 
-        return { ok: true, delivery: "dm_rest" };
+        return {
+          ok: true,
+          delivery: "dm_rest",
+          targetId: discordUserId,
+          targetTag: null
+        };
       }
     ];
 
@@ -846,7 +856,10 @@ export function registerWebsiteRoutes(app, deps) {
         robloxUsername,
         discordUserId: account.discordUserId,
         ok: Boolean(deliveryResult?.ok),
-        error: deliveryResult?.error || null
+        error: deliveryResult?.error || null,
+        deliveryMethod: deliveryResult?.delivery || null,
+        targetId: deliveryResult?.targetId || account.discordUserId || null,
+        targetTag: deliveryResult?.targetTag || null
       }));
 
       if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
@@ -884,7 +897,9 @@ export function registerWebsiteRoutes(app, deps) {
         verificationId,
         expiresAt,
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
-        delivery: "dm"
+        delivery: "dm",
+        linkedDiscordUserId: account.discordUserId || null,
+        deliveryMethod: deliveryResult?.delivery || null
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
