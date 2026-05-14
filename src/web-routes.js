@@ -853,6 +853,78 @@ export function registerWebsiteRoutes(app, deps) {
         "discord_user_fetch_timeout"
       ).catch(() => null);
 
+      if (!targetUser && account.discordUserId) {
+        const restEmbeds = Array.isArray(payload?.embeds)
+          ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+          : [];
+        const restComponents = Array.isArray(payload?.components)
+          ? payload.components.map((component) => typeof component?.toJSON === "function" ? component.toJSON() : component)
+          : [];
+
+        try {
+          const dmChannel = await withTimeout(
+            () => client.rest.post(Routes.userChannels(), {
+              body: { recipient_id: account.discordUserId }
+            }),
+            5000,
+            "discord_dm_channel_timeout"
+          );
+
+          await withTimeout(
+            () => client.rest.post(Routes.channelMessages(dmChannel.id), {
+              body: {
+                content: payload?.content || undefined,
+                embeds: restEmbeds,
+                components: restComponents
+              }
+            }),
+            5000,
+            "discord_dm_send_timeout"
+          );
+
+          console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+            robloxUsername,
+            discordUserId: account.discordUserId,
+            ok: true,
+            error: null,
+            deliveryMethod: "dm_rest",
+            matchedMemberId: matchedMember?.id || null,
+            matchedMemberTag: matchedMember?.user?.tag || matchedMember?.user?.username || null,
+            targetId: account.discordUserId,
+            targetTag: null
+          }));
+
+          pendingWebsiteLoginVerifications.set(verificationId, {
+            verificationId,
+            code,
+            discordUserId: account.discordUserId,
+            robloxUsername: account.robloxUsername,
+            accountNumber: account.accountNumber,
+            expiresAt,
+            used: false,
+            deliveryStatus: "sent",
+            deliveryError: null,
+            deliveryCompletedAt: new Date().toISOString()
+          });
+
+          return res.status(200).json({
+            ok: true,
+            verificationId,
+            expiresAt,
+            maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
+            delivery: "dm",
+            linkedDiscordUserId: account.discordUserId || null,
+            deliveryMethod: "dm_rest"
+          });
+        } catch (restError) {
+          console.warn("[WEBSITE LOGIN] rest dm attempt failed", JSON.stringify({
+            robloxUsername,
+            discordUserId: account.discordUserId,
+            error: restError?.message || "discord_dm_channel_timeout"
+          }));
+        }
+      }
+
       if (!targetUser) {
         console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
           robloxUsername,
