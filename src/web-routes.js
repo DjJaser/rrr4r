@@ -834,7 +834,11 @@ export function registerWebsiteRoutes(app, deps) {
         expiresAt
       });
       const guild = client?.guilds?.cache?.get?.(config.guildId)
-        || await client?.guilds?.fetch?.(config.guildId).catch(() => null);
+        || await withTimeout(
+          () => client?.guilds?.fetch?.(config.guildId),
+          3000,
+          "guild_fetch_timeout"
+        ).catch(() => null);
       const matchedMember = guild
         ? await withTimeout(
             () => findGuildMemberByRobloxUsername(guild, robloxUsername),
@@ -855,6 +859,8 @@ export function registerWebsiteRoutes(app, deps) {
           discordUserId: account.discordUserId,
           ok: false,
           error: "discord_user_fetch_failed",
+          matchedMemberId: matchedMember?.id || null,
+          matchedMemberTag: matchedMember?.user?.tag || matchedMember?.user?.username || null,
           deliveryMethod: null,
           targetId: account.discordUserId || null,
           targetTag: null
@@ -879,6 +885,8 @@ export function registerWebsiteRoutes(app, deps) {
         ok: true,
         error: null,
         deliveryMethod: matchedMember?.user ? "dm_member_lookup" : (directUser ? "dm_cache" : "dm_fetch"),
+        matchedMemberId: matchedMember?.id || null,
+        matchedMemberTag: matchedMember?.user?.tag || matchedMember?.user?.username || null,
         targetId: targetUser.id || account.discordUserId || null,
         targetTag: targetUser.tag || targetUser.username || null
       }));
@@ -909,6 +917,9 @@ export function registerWebsiteRoutes(app, deps) {
       console.error("Website mobile-request-code primary handler failure:", error);
       if (error?.message === "discord_user_fetch_timeout") {
         return res.status(409).json({ ok: false, error: "discord_user_fetch_timeout" });
+      }
+      if (error?.message === "guild_fetch_timeout") {
+        return res.status(409).json({ ok: false, error: "guild_fetch_timeout" });
       }
       if (error?.message === "discord_dm_send_timeout") {
         return res.status(409).json({ ok: false, error: "discord_dm_send_timeout" });
