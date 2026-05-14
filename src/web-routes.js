@@ -880,9 +880,37 @@ export function registerWebsiteRoutes(app, deps) {
       }));
 
       if (!deliveryResult.ok) {
+        const deliveryError = deliveryResult.error || "dm_delivery_failed";
+
+        if (softWebsiteDeliveryErrors.has(deliveryError)) {
+          pendingWebsiteLoginVerifications.set(verificationId, {
+            verificationId,
+            code,
+            discordUserId: account.discordUserId,
+            robloxUsername: account.robloxUsername,
+            accountNumber: account.accountNumber,
+            expiresAt,
+            used: false,
+            deliveryStatus: "failed",
+            deliveryError,
+            deliveryCompletedAt: new Date().toISOString()
+          });
+
+          return res.status(200).json({
+            ok: true,
+            verificationId,
+            expiresAt,
+            maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
+            delivery: "fallback",
+            linkedDiscordUserId: account.discordUserId || null,
+            deliveryMethod: null,
+            warning: deliveryError
+          });
+        }
+
         return res.status(409).json({
           ok: false,
-          error: deliveryResult.error || "dm_delivery_failed",
+          error: deliveryError,
           linkedDiscordUserId: account.discordUserId,
           accountNumber: account.accountNumber
         });
