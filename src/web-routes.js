@@ -25,6 +25,7 @@ export function registerWebsiteRoutes(app, deps) {
     processWebsiteBankTransfer,
     sendWebsiteNameChangeRequest,
     findGuildMemberForWebsiteAccess,
+    findGuildMemberByRobloxUsername,
     updateAccount,
     appendTransaction,
     getFinesForUser,
@@ -838,19 +839,49 @@ export function registerWebsiteRoutes(app, deps) {
           expiresAt: deliveryExpiresAt
         })
       );
+      let resolvedDeliveryResult = deliveryResult;
+
+      if (!resolvedDeliveryResult?.ok) {
+        const guild = client?.guilds?.cache?.get?.(config.guildId)
+          || await client?.guilds?.fetch?.(config.guildId).catch(() => null);
+        const matchedMember = guild && robloxUsername
+          ? await findGuildMemberByRobloxUsername(guild, robloxUsername).catch(() => null)
+          : null;
+
+        if (matchedMember?.user?.id && matchedMember.user.id !== account.discordUserId) {
+          const matchedResult = await sendWebsiteVerificationDmForLogin(
+            matchedMember.user.id,
+            buildWebsiteVerificationDmPayload({
+              verificationId,
+              account,
+              robloxUsername,
+              code,
+              expiresAt: deliveryExpiresAt
+            })
+          );
+
+          if (matchedResult?.ok) {
+            resolvedDeliveryResult = {
+              ...matchedResult,
+              targetId: matchedMember.user.id,
+              targetTag: matchedMember.user.tag || matchedMember.user.username || null
+            };
+          }
+        }
+      }
 
       console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
         robloxUsername,
         discordUserId: account.discordUserId,
-        ok: Boolean(deliveryResult?.ok),
-        error: deliveryResult?.error || null,
-        deliveryMethod: deliveryResult?.delivery || null,
-        targetId: deliveryResult?.targetId || account.discordUserId || null,
-        targetTag: deliveryResult?.targetTag || null
+        ok: Boolean(resolvedDeliveryResult?.ok),
+        error: resolvedDeliveryResult?.error || null,
+        deliveryMethod: resolvedDeliveryResult?.delivery || null,
+        targetId: resolvedDeliveryResult?.targetId || account.discordUserId || null,
+        targetTag: resolvedDeliveryResult?.targetTag || null
       }));
 
-      if (!deliveryResult.ok) {
-        const deliveryError = deliveryResult.error || "dm_delivery_failed";
+      if (!resolvedDeliveryResult.ok) {
+        const deliveryError = resolvedDeliveryResult.error || "dm_delivery_failed";
 
         if (softWebsiteDeliveryErrors.has(deliveryError)) {
           pendingWebsiteLoginVerifications.set(verificationId, {
@@ -906,7 +937,7 @@ export function registerWebsiteRoutes(app, deps) {
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
         delivery: "dm",
         linkedDiscordUserId: account.discordUserId || null,
-        deliveryMethod: deliveryResult?.delivery || null
+        deliveryMethod: resolvedDeliveryResult?.delivery || null
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
