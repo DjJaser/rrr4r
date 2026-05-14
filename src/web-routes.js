@@ -662,11 +662,21 @@ export function registerWebsiteRoutes(app, deps) {
 
     try {
       const directUser = client?.users?.cache?.get?.(discordUserId) || null;
-      const targetUser = directUser || await withTimeout(
-        () => client.users.fetch(discordUserId),
-        6000,
-        "discord_user_fetch_timeout"
-      ).catch(() => null);
+      const guildMember = directUser
+        ? null
+        : await withTimeout(
+            () => findGuildMemberForWebsiteAccess(discordUserId),
+            6000,
+            "guild_member_lookup_timeout"
+          ).catch(() => null);
+      const fetchedUser = directUser || guildMember?.user
+        ? null
+        : await withTimeout(
+            () => client.users.fetch(discordUserId, { force: true }),
+            6000,
+            "discord_user_fetch_timeout"
+          ).catch(() => null);
+      const targetUser = directUser || guildMember?.user || fetchedUser || null;
 
       if (!targetUser) {
         return { ok: false, error: "discord_user_fetch_failed" };
@@ -680,7 +690,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       return {
         ok: true,
-        delivery: directUser ? "dm_cache" : "dm_fetch",
+        delivery: directUser ? "dm_cache" : (guildMember?.user ? "dm_member" : "dm_fetch"),
         targetId: targetUser.id,
         targetTag: targetUser.tag || targetUser.username || null
       };
