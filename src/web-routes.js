@@ -32,9 +32,12 @@ export function registerWebsiteRoutes(app, deps) {
     getFine,
     updateFine,
     applyBudgetTransaction,
+    applyProjectMoneyMutation,
     BUDGET_KEYS,
     getVehicleShowroomMetaRecord,
-    upsertVehicleShowroomMeta
+    upsertVehicleShowroomMeta,
+    upsertProject,
+    appendProjectTransaction
   } = deps;
 
   function isAuthorizedInternalRequest(req) {
@@ -212,6 +215,85 @@ export function registerWebsiteRoutes(app, deps) {
     return listProjects()
       .map((project) => buildWebsiteProjectSnapshot(project, discordUserId))
       .filter((project) => project && project.accessLevel !== "none");
+  }
+
+  function canManageWebsiteProject(account, project) {
+    const accessLevel = getProjectAccessLevelByUserId(account?.discordUserId, project);
+    return ["owner", "partner", "admin"].includes(accessLevel);
+  }
+
+  function buildWebsiteRentalOfferSnapshot(project, vehicle = {}) {
+    const meta = getVehicleShowroomMetaRecord(vehicle.vehicleName || vehicle.name || "");
+    const canonicalName = String(vehicle.vehicleName || vehicle.name || "").trim();
+    const pricePerHour = Number(vehicle.pricePerHour || 0);
+    const pricePerDay = Number(vehicle.pricePerDay || 0);
+
+    return {
+      vehicleName: canonicalName,
+      projectKey: project.key,
+      projectName: project.name || getProjectDefinition(project.key)?.title || project.key,
+      image: vehicle.image || meta?.image || "",
+      description: vehicle.description || meta?.description || "",
+      speed: Number(vehicle.speed || meta?.speed || 0),
+      acceleration: vehicle.acceleration || meta?.acceleration || "",
+      seats: Number(vehicle.seats || meta?.seats || 4),
+      pricePerHour,
+      pricePerDay,
+      hidden: Boolean(vehicle.hidden),
+      rentable: !Boolean(vehicle.hidden) && (pricePerHour > 0 || pricePerDay > 0),
+      maxHours: 12,
+      maxDays: 3
+    };
+  }
+
+  function buildWebsiteRentalCatalog(discordUserId) {
+    const showroomProjects = listProjects()
+      .map((project) => ensureProjectState(project.key) || project)
+      .filter((project) => getProjectDefinition(project.key)?.type === "showroom");
+
+    const offersByVehicleKey = new Map();
+    for (const project of showroomProjects) {
+      for (const vehicle of Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []) {
+        const snapshot = buildWebsiteRentalOfferSnapshot(project, vehicle);
+        const key = normalizeVehicleName(snapshot.vehicleName);
+        if (!offersByVehicleKey.has(key)) {
+          offersByVehicleKey.set(key, []);
+        }
+        offersByVehicleKey.get(key).push(snapshot);
+      }
+    }
+
+    const ownedVehicleNames = new Set(
+      listOwnedVehicles(discordUserId)
+        .map((vehicle) => normalizeVehicleName(vehicle.name))
+        .filter(Boolean)
+    );
+
+    return getSortedVehicleCatalog()
+      .map((vehicle) => {
+        const meta = getVehicleShowroomMetaRecord(vehicle.name);
+        if (meta?.hidden) {
+          return null;
+        }
+
+        const key = normalizeVehicleName(vehicle.name);
+        const offers = offersByVehicleKey.get(key) || [];
+        return {
+          name: vehicle.name,
+          price: Number(vehicle.price || 0),
+          isFree: Boolean(vehicle.isFree),
+          owned: ownedVehicleNames.has(key),
+          image: meta?.image || "",
+          description: meta?.description || "",
+          speed: Number(meta?.speed || 0),
+          acceleration: meta?.acceleration || "",
+          seats: Number(meta?.seats || 4),
+          hidden: Boolean(meta?.hidden),
+          rentable: offers.some((offer) => offer.rentable),
+          rentalOffers: offers
+        };
+      })
+      .filter(Boolean);
   }
 
   function buildWebsiteFineSnapshot(fine = {}) {
@@ -1697,6 +1779,276 @@ export function registerWebsiteRoutes(app, deps) {
       });
     } catch (error) {
       console.error("Website projects failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/projects/showroom-vehicle", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      const projectKey = String(req.body?.projectKey || "").trim();
+      const vehicleName = String(req.body?.vehicleName || "").trim();
+      const pricePerHour = Number(req.body?.pricePerHour || 0);
+      const pricePerDay = Number(req.body?.pricePerDay || 0);
+
+      if (!projectKey || !vehicleName) {
+        return res.status(400).json({ ok: false, error: "missing_showroom_vehicle_fields" });
+      }
+
+      const project = ensureProjectState(projectKey);
+      const definition = getProjectDefinition(projectKey);
+      if (!project || !definition) {
+        return res.status(404).json({ ok: false, error: "project_not_found" });
+      }
+
+      if (definition.type !== "showroom") {
+        return res.status(400).json({ ok: false, error: "project_not_showroom" });
+      }
+
+      if (!canManageWebsiteProject(authResult.account, project)) {
+        return res.status(403).json({ ok: false, error: "project_access_denied" });
+      }
+
+      const canonicalVehicleName = getSortedVehicleCatalog()
+        .find((entry) => normalizeVehicleName(entry.name) === normalizeVehicleName(vehicleName))?.name
+        || vehicleName;
+
+      const metaPatch = {
+        image: String(req.body?.image || ""),
+        description: String(req.body?.description || ""),
+        speed: Number(req.body?.speed || 0),
+        acceleration: String(req.body?.acceleration || ""),
+        seats: Number(req.body?.seats || 4),
+        hidden: Boolean(req.body?.hidden)
+      };
+
+      upsertVehicleShowroomMeta(canonicalVehicleName, metaPatch);
+
+      const nextVehicle = {
+        vehicleName: canonicalVehicleName,
+        pricePerHour: Math.max(0, pricePerHour),
+        pricePerDay: Math.max(0, pricePerDay),
+        image: metaPatch.image || getVehicleShowroomMetaRecord(canonicalVehicleName)?.image || "",
+        description: metaPatch.description || getVehicleShowroomMetaRecord(canonicalVehicleName)?.description || "",
+        speed: Number(metaPatch.speed || getVehicleShowroomMetaRecord(canonicalVehicleName)?.speed || 0),
+        acceleration: metaPatch.acceleration || getVehicleShowroomMetaRecord(canonicalVehicleName)?.acceleration || "",
+        seats: Number(metaPatch.seats || getVehicleShowroomMetaRecord(canonicalVehicleName)?.seats || 4),
+        hidden: Boolean(metaPatch.hidden)
+      };
+
+      const updatedProject = upsertProject(projectKey, (current) => {
+        const showroomVehicles = Array.isArray(current.showroomVehicles) ? [...current.showroomVehicles] : [];
+        const existingIndex = showroomVehicles.findIndex((entry) => normalizeVehicleName(entry.vehicleName) === normalizeVehicleName(canonicalVehicleName));
+        if (existingIndex >= 0) {
+          showroomVehicles[existingIndex] = {
+            ...showroomVehicles[existingIndex],
+            ...nextVehicle
+          };
+        } else {
+          showroomVehicles.push(nextVehicle);
+        }
+
+        return {
+          ...current,
+          showroomVehicles
+        };
+      });
+
+      appendProjectTransaction({
+        projectKey,
+        type: "showroom_vehicle_configured",
+        label: "ضبط مركبة تأجير",
+        amount: 0,
+        direction: "none",
+        actorUserId: authResult.account.discordUserId,
+        note: `${canonicalVehicleName} | ساعة: ${nextVehicle.pricePerHour} | يوم: ${nextVehicle.pricePerDay}`
+      });
+
+      return res.status(200).json({
+        ok: true,
+        project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
+        vehicle: buildWebsiteRentalOfferSnapshot(updatedProject, nextVehicle)
+      });
+    } catch (error) {
+      console.error("Website project showroom-vehicle failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/rentals/catalog", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        account: buildWebsiteAccountSnapshot(authResult.account),
+        vehicles: buildWebsiteRentalCatalog(authResult.account.discordUserId)
+      });
+    } catch (error) {
+      console.error("Website rentals catalog failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.post("/web/rentals/book", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      const projectKey = String(req.body?.projectKey || "").trim();
+      const vehicleName = String(req.body?.vehicleName || "").trim();
+      const durationUnit = String(req.body?.durationUnit || "hour").trim().toLowerCase();
+      const durationValue = Number(req.body?.durationValue || 0);
+
+      if (!projectKey || !vehicleName || !["hour", "day"].includes(durationUnit) || !Number.isInteger(durationValue)) {
+        return res.status(400).json({ ok: false, error: "missing_rental_fields" });
+      }
+
+      const maxDuration = durationUnit === "hour" ? 12 : 3;
+      if (durationValue <= 0 || durationValue > maxDuration) {
+        return res.status(400).json({ ok: false, error: "invalid_rental_duration" });
+      }
+
+      const project = ensureProjectState(projectKey);
+      const definition = getProjectDefinition(projectKey);
+      if (!project || definition?.type !== "showroom") {
+        return res.status(404).json({ ok: false, error: "project_not_showroom" });
+      }
+
+      const offerRecord = (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : [])
+        .find((entry) => normalizeVehicleName(entry.vehicleName) === normalizeVehicleName(vehicleName));
+
+      if (!offerRecord) {
+        return res.status(404).json({ ok: false, error: "rental_offer_not_found" });
+      }
+
+      const pricePerHour = Number(offerRecord.pricePerHour || 0);
+      const pricePerDay = Number(offerRecord.pricePerDay || 0);
+      const unitPrice = durationUnit === "day" ? pricePerDay : pricePerHour;
+      const totalPrice = unitPrice * durationValue;
+
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0 || !Number.isFinite(totalPrice) || totalPrice <= 0) {
+        return res.status(400).json({ ok: false, error: "rental_offer_not_configured" });
+      }
+
+      if (Boolean(authResult.account.bankFrozen)) {
+        return res.status(403).json({ ok: false, error: "account_frozen" });
+      }
+
+      if (Number(authResult.account.balance || 0) < totalPrice) {
+        return res.status(400).json({ ok: false, error: "insufficient_balance" });
+      }
+
+      const now = Date.now();
+      const expiresAt = new Date(
+        now + (durationUnit === "day" ? durationValue * 24 * 60 * 60 * 1000 : durationValue * 60 * 60 * 1000)
+      ).toISOString();
+      const rentalId = `rental_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+      const updatedAccount = updateAccount(authResult.account.discordUserId, (current) => {
+        current.balance = Number(current.balance || 0) - totalPrice;
+        return current;
+      });
+
+      appendTransaction({
+        discordUserId: authResult.account.discordUserId,
+        robloxUsername: updatedAccount?.robloxUsername || authResult.account.robloxUsername,
+        type: "website_vehicle_rental",
+        amount: totalPrice,
+        direction: "debit",
+        balanceAfter: Number(updatedAccount?.balance || 0),
+        metadata: {
+          rentalId,
+          vehicleName: offerRecord.vehicleName,
+          projectKey,
+          durationUnit,
+          durationValue
+        }
+      });
+
+      const projectIncomeResult = applyProjectMoneyMutation(
+        projectKey,
+        totalPrice,
+        "showroom_income",
+        authResult.account.discordUserId,
+        `دخل تأجير ${offerRecord.vehicleName} لمدة ${durationValue} ${durationUnit === "day" ? "يوم" : "ساعة"}`
+      );
+
+      const updatedProject = upsertProject(projectKey, (current) => ({
+        ...current,
+        rentals: [
+          ...(Array.isArray(current.rentals) ? current.rentals.filter((entry) => entry?.expiresAt ? new Date(entry.expiresAt).getTime() > now : true) : []),
+          {
+            rentalId,
+            userId: authResult.account.discordUserId,
+            vehicleName: offerRecord.vehicleName,
+            projectKey,
+            projectName: current.name || definition?.title || projectKey,
+            startedAt: new Date(now).toISOString(),
+            expiresAt,
+            durationUnit,
+            durationValue,
+            totalPrice,
+            pricePerHour,
+            pricePerDay
+          }
+        ]
+      }));
+
+      await client.users.fetch(authResult.account.discordUserId)
+        .then((user) => user.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x0b1f3a)
+              .setTitle("🚘 تم تسجيل تأجير مركبة بنجاح")
+              .setDescription("**أصبحت المركبة متاحة لك داخل البوت خلال مدة الإيجار المحددة.**")
+              .addFields(
+                { name: "المركبة", value: `**${offerRecord.vehicleName}**`, inline: true },
+                { name: "المعرض", value: `**${updatedProject.name || definition?.title || projectKey}**`, inline: true },
+                { name: "الإجمالي", value: `**${formatCurrency(totalPrice)}**`, inline: true },
+                { name: "المدة", value: `**${durationValue} ${durationUnit === "day" ? "يوم" : "ساعة"}**`, inline: true },
+                { name: "ينتهي", value: `**<t:${Math.floor(new Date(expiresAt).getTime() / 1000)}:R>**`, inline: true },
+                { name: "رصيدك بعد الخصم", value: `**${formatCurrency(updatedAccount?.balance || 0)}**`, inline: true }
+              )
+              .setTimestamp()
+          ]
+        }).catch(() => null))
+        .catch(() => null);
+
+      return res.status(200).json({
+        ok: true,
+        rentalId,
+        expiresAt,
+        totalPrice,
+        durationUnit,
+        durationValue,
+        account: buildWebsiteAccountSnapshot(updatedAccount),
+        project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
+        projectBudget: projectIncomeResult?.project?.budget ?? updatedProject?.budget ?? 0
+      });
+    } catch (error) {
+      console.error("Website rentals book failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
   });
