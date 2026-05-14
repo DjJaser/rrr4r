@@ -7457,6 +7457,38 @@ function getResourceRequirementGaps(account, requirements = {}) {
   });
 }
 
+function buildWebsiteVerificationFallbackDm({ verificationId, pending }) {
+  const safeUsername = String(pending?.robloxUsername || "غير معروف");
+  const safeAccountNumber = String(pending?.accountNumber || "غير متوفر");
+  const code = String(pending?.code || "").trim();
+  const expiresAt = Number(pending?.expiresAt || 0);
+
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0b1f3a)
+        .setTitle("بوابة Arab World | رمز التحقق")
+        .setDescription("تم جلب آخر رمز تحقق نشط للموقع بناءً على طلبك.")
+        .addFields(
+          { name: "يوزر روبلوكس", value: `**${safeUsername}**`, inline: true },
+          { name: "رقم الحساب", value: `**${safeAccountNumber}**`, inline: true },
+          { name: "رمز التحقق", value: `\`${code}\``, inline: false },
+          { name: "صلاحية الرمز", value: `**<t:${Math.floor(expiresAt / 1000)}:R>**`, inline: false }
+        )
+        .setFooter({ text: "Arab World Mobile Verification" })
+        .setTimestamp()
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`website_verify_copy:${verificationId}`)
+          .setLabel("نسخ الرمز")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    ]
+  };
+}
+
 const pendingCarPurchases = new Map();
 const processedVehicleIds = new Map();
 const recentVehicleSkipLogs = new Map();
@@ -7525,6 +7557,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ]);
       const publicCommandNames = new Set([
         "activite",
+        "رمز-الموقع",
         "ايمبد-المعلومات",
         "المشاريع",
         "محطه-مدينه-اولى",
@@ -7594,6 +7627,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
           embeds: [buildActivationEntryEmbed()],
           components: [createActivationEntryButtons("open")],
           ephemeral: false
+        });
+        return;
+      }
+
+      if (interaction.commandName === "رمز-الموقع") {
+        const now = Date.now();
+        let latestPending = null;
+
+        for (const [verificationId, pending] of pendingWebsiteLoginVerifications.entries()) {
+          if (!pending || pending.discordUserId !== interaction.user.id) {
+            continue;
+          }
+
+          if (now > Number(pending.expiresAt || 0)) {
+            pendingWebsiteLoginVerifications.delete(verificationId);
+            continue;
+          }
+
+          if (pending.used) {
+            continue;
+          }
+
+          if (!latestPending || Number(pending.expiresAt || 0) > Number(latestPending.expiresAt || 0)) {
+            latestPending = {
+              verificationId,
+              ...pending
+            };
+          }
+        }
+
+        if (!latestPending) {
+          await interaction.reply({
+            content: "لا يوجد لديك رمز موقع نشط الآن. اطلب رمزًا جديدًا من الموقع أولًا.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.reply({
+          content: [
+            "رمز التحقق الخاص بالموقع:",
+            `\`${latestPending.code}\``,
+            `الصلاحية: <t:${Math.floor(Number(latestPending.expiresAt || 0) / 1000)}:R>`,
+            latestPending.robloxUsername ? `يوزر روبلوكس: ${latestPending.robloxUsername}` : null,
+            latestPending.accountNumber ? `رقم الحساب: ${latestPending.accountNumber}` : null
+          ].filter(Boolean).join("\n"),
+          ephemeral: true
         });
         return;
       }
@@ -13487,9 +13567,12 @@ registerWebsiteRoutes(app, {
   getFine,
   updateFine,
   applyBudgetTransaction,
+  applyProjectMoneyMutation,
   BUDGET_KEYS,
   getVehicleShowroomMetaRecord,
-  upsertVehicleShowroomMeta
+  upsertVehicleShowroomMeta,
+  upsertProject,
+  appendProjectTransaction
 });
 
 app.get("/", (req, res) => {
@@ -13763,6 +13846,44 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     const normalizedContent = String(message.content || "").trim();
+    if (normalizedContent === "!رمز") {
+      const now = Date.now();
+      let latestPending = null;
+
+      for (const [verificationId, pending] of pendingWebsiteLoginVerifications.entries()) {
+        if (!pending || pending.discordUserId !== message.author.id) {
+          continue;
+        }
+
+        if (now > Number(pending.expiresAt || 0)) {
+          pendingWebsiteLoginVerifications.delete(verificationId);
+          continue;
+        }
+
+        if (pending.used) {
+          continue;
+        }
+
+        if (!latestPending || Number(pending.expiresAt || 0) > Number(latestPending.pending?.expiresAt || 0)) {
+          latestPending = { verificationId, pending };
+        }
+      }
+
+      if (!latestPending) {
+        await message.reply("لا يوجد لديك رمز موقع نشط الآن. اطلب رمزًا جديدًا من الموقع أولًا.").catch(() => null);
+        return;
+      }
+
+      try {
+        await message.author.send(buildWebsiteVerificationFallbackDm(latestPending));
+        await message.reply("تم إرسال رمز التحقق لك في الخاص.").catch(() => null);
+      } catch (error) {
+        console.error("Website fallback DM command failed:", error);
+        await message.reply("تعذر إرسال الرمز في الخاص. تأكد أن الخاص مفتوح مع البوت ثم أعد المحاولة.").catch(() => null);
+      }
+      return;
+    }
+
     if (normalizedContent !== "!اعطاء مال اخر سرقات") {
       return;
     }
