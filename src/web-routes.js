@@ -582,8 +582,7 @@ export function registerWebsiteRoutes(app, deps) {
 
     const attempts = [
       attemptViaCachedUser,
-      attemptViaFetchedUser,
-      attemptViaGuildMember
+      attemptViaFetchedUser
     ];
 
     let lastError = "dm_delivery_failed";
