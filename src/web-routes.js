@@ -156,13 +156,25 @@ export function registerWebsiteRoutes(app, deps) {
       ownerUserId: project.ownerUserId || null,
       ownerMention: getProjectOwnerMention(project),
       budget: Number(project.budget || 0),
-      fuelPercent: Number(project.fuelPercent || 0),
+      fuelPercent: definition?.type === "station" ? Number(project.fuelPercent || 0) : null,
       accessLevel,
       dashboardChannelId: project.dashboardChannelId || null,
       dashboardMessageId: project.dashboardMessageId || null,
+      ordersChannelId: project.ordersChannelId || null,
       partners: Array.isArray(project.partners) ? [...project.partners] : [],
       admins: Array.isArray(project.admins) ? [...project.admins] : [],
-      employees: Array.isArray(project.employees) ? [...project.employees] : []
+      employees: Array.isArray(project.employees) ? [...project.employees] : [],
+      showroomVehicles: Array.isArray(project.showroomVehicles) ? [...project.showroomVehicles] : [],
+      rentals: Array.isArray(project.rentals) ? [...project.rentals] : [],
+      metrics: {
+        fuelPercent: definition?.type === "station" ? Number(project.fuelPercent || 0) : null,
+        showroomVehiclesCount: definition?.type === "showroom"
+          ? (Array.isArray(project.showroomVehicles) ? project.showroomVehicles.length : 0)
+          : 0,
+        rentalsCount: definition?.type === "showroom"
+          ? (Array.isArray(project.rentals) ? project.rentals.length : 0)
+          : 0
+      }
     };
   }
 
