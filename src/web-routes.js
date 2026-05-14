@@ -210,7 +210,9 @@ export function registerWebsiteRoutes(app, deps) {
       reason: String(fine.reason || ""),
       violationType: String(fine.violationType || ""),
       officerName: String(fine.officerName || ""),
-      createdAt: fine.createdAt || null
+      targetName: String(fine.targetName || ""),
+      createdAt: fine.createdAt || null,
+      paidAt: fine.paidAt || null
     };
   }
 
@@ -223,7 +225,9 @@ export function registerWebsiteRoutes(app, deps) {
   }
 
   async function findAccountByDiscordIdentityText(value = "") {
-    const guild = client?.guilds?.cache?.get?.(config.guildId) || null;
+    const guild = client?.guilds?.cache?.get?.(config.guildId)
+      || await client?.guilds?.fetch?.(config.guildId).catch(() => null)
+      || null;
     const normalized = normalizeLookupValue(value);
     if (!guild || !normalized) {
       return null;
@@ -234,7 +238,7 @@ export function registerWebsiteRoutes(app, deps) {
       return getAccount(mentionMatch[1]);
     }
 
-    const matchedMember = [...guild.members.cache.values()].find((member) => {
+    const findMatchingMember = (members) => members.find((member) => {
       const candidateValues = [
         member.user?.username,
         member.user?.globalName,
@@ -254,6 +258,15 @@ export function registerWebsiteRoutes(app, deps) {
         );
       });
     }) || null;
+
+    let matchedMember = findMatchingMember([...guild.members.cache.values()]);
+
+    if (!matchedMember) {
+      const fetchedMembers = await guild.members.fetch({ query: value, limit: 25 }).catch(() => null);
+      if (fetchedMembers?.size) {
+        matchedMember = findMatchingMember([...fetchedMembers.values()]);
+      }
+    }
 
     return matchedMember ? getAccount(matchedMember.id) : null;
   }
@@ -1512,6 +1525,11 @@ export function registerWebsiteRoutes(app, deps) {
 
       const targetAccount = await resolveWebsiteTransferTarget(req.body ?? {});
       if (!targetAccount) {
+        console.warn("Website account-transfer target lookup failed", {
+          sourceAccount: authResult.account.accountNumber,
+          rawTarget: req.body?.target || req.body?.recipient || null,
+          payload: req.body ?? {}
+        });
         return res.status(404).json({ ok: false, error: "target_account_not_found" });
       }
 
