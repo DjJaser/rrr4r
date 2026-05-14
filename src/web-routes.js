@@ -753,41 +753,6 @@ export function registerWebsiteRoutes(app, deps) {
       const code = createWebsiteVerificationCode();
       const deliveryExpiresAt = Date.now() + 10 * 60 * 1000;
 
-      const deliveryResult = await sendWebsiteVerificationDm(
-        account.discordUserId,
-        buildWebsiteVerificationDmPayload({
-          verificationId,
-          account,
-          robloxUsername,
-          code,
-          expiresAt: deliveryExpiresAt
-        })
-      );
-
-      console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
-        robloxUsername,
-        discordUserId: account.discordUserId,
-        ok: Boolean(deliveryResult?.ok),
-        error: deliveryResult?.error || null
-      }));
-
-      if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
-        return res.status(409).json({
-          ok: false,
-          error: deliveryResult.error || "dm_delivery_failed",
-          linkedDiscordUserId: account.discordUserId,
-          accountNumber: account.accountNumber
-        });
-      }
-
-      if (!deliveryResult.ok) {
-        console.warn("[WEBSITE LOGIN] Delivery returned timeout-like error, proceeding as soft success.", JSON.stringify({
-          robloxUsername,
-          discordUserId: account.discordUserId,
-          error: deliveryResult.error || "unknown_delivery_error"
-        }));
-      }
-
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
       pendingWebsiteLoginVerifications.set(verificationId, {
@@ -798,17 +763,60 @@ export function registerWebsiteRoutes(app, deps) {
         accountNumber: account.accountNumber,
         expiresAt,
         used: false,
-        deliveryStatus: deliveryResult.ok ? "sent" : "uncertain",
-        deliveryError: deliveryResult.ok ? null : (deliveryResult.error || null),
-        deliveryCompletedAt: new Date().toISOString()
+        deliveryStatus: "pending",
+        deliveryError: null,
+        deliveryCompletedAt: null
       });
 
-      return res.status(200).json({
+      void sendWebsiteVerificationDm(
+        account.discordUserId,
+        buildWebsiteVerificationDmPayload({
+          verificationId,
+          account,
+          robloxUsername,
+          code,
+          expiresAt: deliveryExpiresAt
+        })
+      ).then((deliveryResult) => {
+        console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+          robloxUsername,
+          discordUserId: account.discordUserId,
+          ok: Boolean(deliveryResult?.ok),
+          error: deliveryResult?.error || null
+        }));
+
+        const current = pendingWebsiteLoginVerifications.get(verificationId);
+        if (!current || current.used) {
+          return;
+        }
+
+        pendingWebsiteLoginVerifications.set(verificationId, {
+          ...current,
+          deliveryStatus: deliveryResult?.ok ? "sent" : (softWebsiteDeliveryErrors.has(deliveryResult?.error || "") ? "uncertain" : "failed"),
+          deliveryError: deliveryResult?.ok ? null : (deliveryResult?.error || "dm_delivery_failed"),
+          deliveryCompletedAt: new Date().toISOString()
+        });
+      }).catch((error) => {
+        console.error("[WEBSITE LOGIN] background delivery failure", error);
+        const current = pendingWebsiteLoginVerifications.get(verificationId);
+        if (!current || current.used) {
+          return;
+        }
+
+        pendingWebsiteLoginVerifications.set(verificationId, {
+          ...current,
+          deliveryStatus: "failed",
+          deliveryError: error?.message || "dm_delivery_failed",
+          deliveryCompletedAt: new Date().toISOString()
+        });
+      });
+
+      return res.status(202).json({
         ok: true,
         verificationId,
         expiresAt,
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
-        delivery: "dm"
+        delivery: "pending"
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
@@ -1200,7 +1208,12 @@ export function registerWebsiteRoutes(app, deps) {
     }
   });
 
-  app.post(["/web/_legacy_disabled/showroom-request-status", "/web/_legacy_disabled/mobile-request-status"], async (req, res) => {
+  app.post([
+    "/web/showroom-request-status",
+    "/web/mobile-request-status",
+    "/web/_legacy_disabled/showroom-request-status",
+    "/web/_legacy_disabled/mobile-request-status"
+  ], async (req, res) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
