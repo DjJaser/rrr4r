@@ -510,6 +510,8 @@ export function registerWebsiteRoutes(app, deps) {
 
   const softWebsiteDeliveryErrors = new Set([
     "discord_cached_dm_timeout",
+    "discord_user_fetch_timeout",
+    "discord_fetched_dm_timeout",
     "discord_dm_channel_timeout",
     "discord_dm_send_timeout"
   ]);
@@ -659,19 +661,28 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     try {
-      const fetchedUser = await client.users.fetch(discordUserId, { force: true }).catch(() => null);
+      const directUser = client?.users?.cache?.get?.(discordUserId) || null;
+      const targetUser = directUser || await withTimeout(
+        () => client.users.fetch(discordUserId),
+        6000,
+        "discord_user_fetch_timeout"
+      ).catch(() => null);
 
-      if (!fetchedUser) {
+      if (!targetUser) {
         return { ok: false, error: "discord_user_fetch_failed" };
       }
 
-      await fetchedUser.send(payload);
+      await withTimeout(
+        () => targetUser.send(payload),
+        6000,
+        "discord_fetched_dm_timeout"
+      );
 
       return {
         ok: true,
-        delivery: "dm_fetch",
-        targetId: fetchedUser.id,
-        targetTag: fetchedUser.tag || fetchedUser.username || null
+        delivery: directUser ? "dm_cache" : "dm_fetch",
+        targetId: targetUser.id,
+        targetTag: targetUser.tag || targetUser.username || null
       };
     } catch (error) {
       return {
