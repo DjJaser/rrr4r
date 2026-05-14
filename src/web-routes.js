@@ -825,97 +825,54 @@ export function registerWebsiteRoutes(app, deps) {
 
       const verificationId = createWebsiteVerificationId();
       const code = createWebsiteVerificationCode();
-      const deliveryExpiresAt = Date.now() + 10 * 60 * 1000;
-
       const expiresAt = Date.now() + 10 * 60 * 1000;
-
-      const deliveryResult = await sendWebsiteVerificationDmForLogin(
-        account.discordUserId,
-        buildWebsiteVerificationDmPayload({
-          verificationId,
-          account,
-          robloxUsername,
-          code,
-          expiresAt: deliveryExpiresAt
-        })
-      );
-      let resolvedDeliveryResult = deliveryResult;
-
-      if (!resolvedDeliveryResult?.ok) {
-        const guild = client?.guilds?.cache?.get?.(config.guildId)
-          || await client?.guilds?.fetch?.(config.guildId).catch(() => null);
-        const matchedMember = guild && robloxUsername
-          ? await findGuildMemberByRobloxUsername(guild, robloxUsername).catch(() => null)
-          : null;
-
-        if (matchedMember?.user?.id && matchedMember.user.id !== account.discordUserId) {
-          const matchedResult = await sendWebsiteVerificationDmForLogin(
-            matchedMember.user.id,
-            buildWebsiteVerificationDmPayload({
-              verificationId,
-              account,
-              robloxUsername,
-              code,
-              expiresAt: deliveryExpiresAt
-            })
-          );
-
-          if (matchedResult?.ok) {
-            resolvedDeliveryResult = {
-              ...matchedResult,
-              targetId: matchedMember.user.id,
-              targetTag: matchedMember.user.tag || matchedMember.user.username || null
-            };
-          }
-        }
-      }
-
-      console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+      const payload = buildWebsiteVerificationDmPayload({
+        verificationId,
+        account,
         robloxUsername,
-        discordUserId: account.discordUserId,
-        ok: Boolean(resolvedDeliveryResult?.ok),
-        error: resolvedDeliveryResult?.error || null,
-        deliveryMethod: resolvedDeliveryResult?.delivery || null,
-        targetId: resolvedDeliveryResult?.targetId || account.discordUserId || null,
-        targetTag: resolvedDeliveryResult?.targetTag || null
-      }));
+        code,
+        expiresAt
+      });
+      const directUser = client?.users?.cache?.get?.(account.discordUserId) || null;
+      const targetUser = directUser || await withTimeout(
+        () => client.users.fetch(account.discordUserId, { force: true }),
+        5000,
+        "discord_user_fetch_timeout"
+      ).catch(() => null);
 
-      if (!resolvedDeliveryResult.ok) {
-        const deliveryError = resolvedDeliveryResult.error || "dm_delivery_failed";
-
-        if (softWebsiteDeliveryErrors.has(deliveryError)) {
-          pendingWebsiteLoginVerifications.set(verificationId, {
-            verificationId,
-            code,
-            discordUserId: account.discordUserId,
-            robloxUsername: account.robloxUsername,
-            accountNumber: account.accountNumber,
-            expiresAt,
-            used: false,
-            deliveryStatus: "failed",
-            deliveryError,
-            deliveryCompletedAt: new Date().toISOString()
-          });
-
-          return res.status(200).json({
-            ok: true,
-            verificationId,
-            expiresAt,
-            maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
-            delivery: "fallback",
-            linkedDiscordUserId: account.discordUserId || null,
-            deliveryMethod: null,
-            warning: deliveryError
-          });
-        }
-
+      if (!targetUser) {
+        console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+          robloxUsername,
+          discordUserId: account.discordUserId,
+          ok: false,
+          error: "discord_user_fetch_failed",
+          deliveryMethod: null,
+          targetId: account.discordUserId || null,
+          targetTag: null
+        }));
         return res.status(409).json({
           ok: false,
-          error: deliveryError,
+          error: "discord_user_fetch_failed",
           linkedDiscordUserId: account.discordUserId,
           accountNumber: account.accountNumber
         });
       }
+
+      await withTimeout(
+        () => targetUser.send(payload),
+        5000,
+        "discord_dm_send_timeout"
+      );
+
+      console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+        robloxUsername,
+        discordUserId: account.discordUserId,
+        ok: true,
+        error: null,
+        deliveryMethod: directUser ? "dm_cache" : "dm_fetch",
+        targetId: targetUser.id || account.discordUserId || null,
+        targetTag: targetUser.tag || targetUser.username || null
+      }));
 
       pendingWebsiteLoginVerifications.set(verificationId, {
         verificationId,
@@ -937,10 +894,16 @@ export function registerWebsiteRoutes(app, deps) {
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
         delivery: "dm",
         linkedDiscordUserId: account.discordUserId || null,
-        deliveryMethod: resolvedDeliveryResult?.delivery || null
+        deliveryMethod: directUser ? "dm_cache" : "dm_fetch"
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
+      if (error?.message === "discord_user_fetch_timeout") {
+        return res.status(409).json({ ok: false, error: "discord_user_fetch_timeout" });
+      }
+      if (error?.message === "discord_dm_send_timeout") {
+        return res.status(409).json({ ok: false, error: "discord_dm_send_timeout" });
+      }
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
   });
