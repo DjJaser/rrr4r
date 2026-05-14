@@ -524,7 +524,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       await withTimeout(
         () => cachedUser.send(payload),
-        9000,
+        15000,
         "discord_cached_dm_timeout"
       );
 
@@ -534,7 +534,7 @@ export function registerWebsiteRoutes(app, deps) {
     const attemptViaFetchedUser = async () => {
       const fetchedUser = await withTimeout(
         () => client.users.fetch(discordUserId, { force: true }),
-        9000,
+        15000,
         "discord_user_fetch_timeout"
       );
 
@@ -544,7 +544,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       await withTimeout(
         () => fetchedUser.send(payload),
-        9000,
+        15000,
         "discord_fetched_dm_timeout"
       );
 
@@ -554,7 +554,7 @@ export function registerWebsiteRoutes(app, deps) {
     const attemptViaGuildMember = async () => {
       const member = await withTimeout(
         () => findGuildMemberForWebsiteAccess(discordUserId),
-        9000,
+        15000,
         "guild_member_lookup_timeout"
       );
 
@@ -564,7 +564,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       await withTimeout(
         () => member.user.send(payload),
-        9000,
+        15000,
         "discord_member_dm_timeout"
       );
 
@@ -576,7 +576,7 @@ export function registerWebsiteRoutes(app, deps) {
         () => client.rest.post(Routes.userChannels(), {
           body: { recipient_id: discordUserId }
         }),
-        9000,
+        15000,
         "discord_dm_channel_timeout"
       );
 
@@ -587,7 +587,7 @@ export function registerWebsiteRoutes(app, deps) {
             embeds: restEmbeds
           }
         }),
-        9000,
+        15000,
         "discord_dm_send_timeout"
       );
 
@@ -614,12 +614,22 @@ export function registerWebsiteRoutes(app, deps) {
           if (result?.error) {
             lastError = result.error;
           }
+          console.warn("[WEBSITE LOGIN] DM attempt returned non-ok", JSON.stringify({
+            discordUserId,
+            attemptIndex: index,
+            error: result?.error || null
+          }));
         } catch (error) {
           lastError = error?.message || lastError;
+          console.warn("[WEBSITE LOGIN] DM attempt threw", JSON.stringify({
+            discordUserId,
+            attemptIndex: index,
+            error: error?.message || String(error)
+          }));
         }
 
         if (index < attempts.length - 1) {
-          await delay(700);
+          await delay(1200);
         }
       }
     } catch (error) {
