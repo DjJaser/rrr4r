@@ -13560,6 +13560,7 @@ registerWebsiteRoutes(app, {
   processWebsiteBankTransfer,
   sendWebsiteNameChangeRequest,
   findGuildMemberForWebsiteAccess,
+  findGuildMemberByRobloxUsername,
   updateAccount,
   appendTransaction,
   getFinesForUser,
@@ -14041,5 +14042,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
 
