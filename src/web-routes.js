@@ -525,13 +525,6 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: false, error: "discord_user_not_found" };
     }
 
-    const restEmbeds = Array.isArray(payload?.embeds)
-      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
-      : [];
-    const restComponents = Array.isArray(payload?.components)
-      ? payload.components.map((component) => typeof component?.toJSON === "function" ? component.toJSON() : component)
-      : [];
-
     const attemptViaCachedUser = async () => {
       const cachedUser = getCachedDiscordUser(discordUserId);
       if (!cachedUser) {
@@ -587,36 +580,10 @@ export function registerWebsiteRoutes(app, deps) {
       return { ok: true, delivery: "dm_member" };
     };
 
-    const attemptViaRest = async () => {
-      const dmChannel = await withTimeout(
-        () => client.rest.post(Routes.userChannels(), {
-          body: { recipient_id: discordUserId }
-        }),
-        15000,
-        "discord_dm_channel_timeout"
-      );
-
-      await withTimeout(
-        () => client.rest.post(Routes.channelMessages(dmChannel.id), {
-          body: {
-            content: payload?.content || undefined,
-            embeds: restEmbeds,
-            components: restComponents
-          }
-        }),
-        15000,
-        "discord_dm_send_timeout"
-      );
-
-      return { ok: true, delivery: "dm_rest" };
-    };
-
     const attempts = [
       attemptViaCachedUser,
       attemptViaFetchedUser,
-      attemptViaGuildMember,
-      attemptViaRest,
-      attemptViaRest
+      attemptViaGuildMember
     ];
 
     let lastError = "dm_delivery_failed";
