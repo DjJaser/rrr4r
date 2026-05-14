@@ -4522,16 +4522,11 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
     return null;
   }
 
-  const linkedAccount = findAccountByRobloxUsername(robloxUsername);
-  if (linkedAccount?.discordUserId) {
-    const linkedMember = await guild.members.fetch(linkedAccount.discordUserId).catch(() => null);
-    if (linkedMember) {
-      return linkedMember;
+  const matchesRobloxName = (candidate) => {
+    if (!candidate?.user) {
+      return false;
     }
-  }
 
-  await guild.members.fetch().catch(() => null);
-  return guild.members.cache.find((candidate) => {
     const displayName = normalizeLooseName(candidate.displayName);
     const username = normalizeLooseName(candidate.user.username);
     const globalName = normalizeLooseName(candidate.user.globalName);
@@ -4548,7 +4543,39 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
       usernameWithoutPrefix,
       globalWithoutPrefix
     ].some((value) => value === normalizedRoblox);
-  }) ?? null;
+  };
+
+  const cachedMatch = guild.members.cache.find(matchesRobloxName);
+  if (cachedMatch) {
+    return cachedMatch;
+  }
+
+  const searchedCollection =
+    await guild.members.search?.({ query: String(robloxUsername).trim(), limit: 10 }).catch(() => null)
+    || await guild.members.fetch?.({ query: String(robloxUsername).trim(), limit: 10 }).catch(() => null);
+
+  if (searchedCollection?.size) {
+    const searchedMatch = searchedCollection.find(matchesRobloxName);
+    if (searchedMatch) {
+      return searchedMatch;
+    }
+  }
+
+  await guild.members.fetch().catch(() => null);
+  const fullCacheMatch = guild.members.cache.find(matchesRobloxName);
+  if (fullCacheMatch) {
+    return fullCacheMatch;
+  }
+
+  const linkedAccount = findAccountByRobloxUsername(robloxUsername);
+  if (linkedAccount?.discordUserId) {
+    const linkedMember = await guild.members.fetch(linkedAccount.discordUserId).catch(() => null);
+    if (linkedMember) {
+      return linkedMember;
+    }
+  }
+
+  return null;
 }
 
 function findAccountsOwningVehicle(vehicleName) {
