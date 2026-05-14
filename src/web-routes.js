@@ -862,21 +862,13 @@ export function registerWebsiteRoutes(app, deps) {
         targetTag: deliveryResult?.targetTag || null
       }));
 
-      if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
+      if (!deliveryResult.ok) {
         return res.status(409).json({
           ok: false,
           error: deliveryResult.error || "dm_delivery_failed",
           linkedDiscordUserId: account.discordUserId,
           accountNumber: account.accountNumber
         });
-      }
-
-      if (!deliveryResult.ok) {
-        console.warn("[WEBSITE LOGIN] Delivery returned timeout-like error, proceeding as soft success.", JSON.stringify({
-          robloxUsername,
-          discordUserId: account.discordUserId,
-          error: deliveryResult.error || "unknown_delivery_error"
-        }));
       }
 
       pendingWebsiteLoginVerifications.set(verificationId, {
@@ -887,8 +879,8 @@ export function registerWebsiteRoutes(app, deps) {
         accountNumber: account.accountNumber,
         expiresAt,
         used: false,
-        deliveryStatus: deliveryResult.ok ? "sent" : "uncertain",
-        deliveryError: deliveryResult.ok ? null : (deliveryResult.error || null),
+        deliveryStatus: "sent",
+        deliveryError: null,
         deliveryCompletedAt: new Date().toISOString()
       });
 
