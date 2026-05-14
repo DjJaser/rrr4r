@@ -645,7 +645,7 @@ export function registerWebsiteRoutes(app, deps) {
       async () => {
         const fetchedUser = await withTimeout(
           () => client.users.fetch(discordUserId, { force: true }),
-          3500,
+          1800,
           "discord_user_fetch_timeout"
         );
 
@@ -655,37 +655,18 @@ export function registerWebsiteRoutes(app, deps) {
 
         await withTimeout(
           () => fetchedUser.send(payload),
-          3500,
+          1800,
           "discord_fetched_dm_timeout"
         );
 
         return { ok: true, delivery: "dm_fetch" };
       },
       async () => {
-        const member = await withTimeout(
-          () => findGuildMemberForWebsiteAccess(discordUserId),
-          3500,
-          "guild_member_lookup_timeout"
-        );
-
-        if (!member?.user) {
-          return { ok: false, error: "guild_member_not_found" };
-        }
-
-        await withTimeout(
-          () => member.user.send(payload),
-          3500,
-          "discord_member_dm_timeout"
-        );
-
-        return { ok: true, delivery: "dm_member" };
-      },
-      async () => {
         const dmChannel = await withTimeout(
           () => client.rest.post(Routes.userChannels(), {
             body: { recipient_id: discordUserId }
           }),
-          3500,
+          1800,
           "discord_dm_channel_timeout"
         );
 
@@ -696,7 +677,7 @@ export function registerWebsiteRoutes(app, deps) {
               embeds: restEmbeds
             }
           }),
-          3500,
+          1800,
           "discord_dm_send_timeout"
         );
 
@@ -720,7 +701,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (index < quickAttempts.length - 1) {
-        await delay(350);
+        await delay(150);
       }
     }
 
