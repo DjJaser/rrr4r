@@ -632,6 +632,101 @@ export function registerWebsiteRoutes(app, deps) {
     };
   }
 
+  async function sendWebsiteVerificationDmForLogin(discordUserId, payload) {
+    if (!discordUserId) {
+      return { ok: false, error: "discord_user_not_found" };
+    }
+
+    const restEmbeds = Array.isArray(payload?.embeds)
+      ? payload.embeds.map((embed) => typeof embed?.toJSON === "function" ? embed.toJSON() : embed)
+      : [];
+
+    const quickAttempts = [
+      async () => {
+        const fetchedUser = await withTimeout(
+          () => client.users.fetch(discordUserId, { force: true }),
+          3500,
+          "discord_user_fetch_timeout"
+        );
+
+        if (!fetchedUser) {
+          return { ok: false, error: "discord_user_fetch_failed" };
+        }
+
+        await withTimeout(
+          () => fetchedUser.send(payload),
+          3500,
+          "discord_fetched_dm_timeout"
+        );
+
+        return { ok: true, delivery: "dm_fetch" };
+      },
+      async () => {
+        const member = await withTimeout(
+          () => findGuildMemberForWebsiteAccess(discordUserId),
+          3500,
+          "guild_member_lookup_timeout"
+        );
+
+        if (!member?.user) {
+          return { ok: false, error: "guild_member_not_found" };
+        }
+
+        await withTimeout(
+          () => member.user.send(payload),
+          3500,
+          "discord_member_dm_timeout"
+        );
+
+        return { ok: true, delivery: "dm_member" };
+      },
+      async () => {
+        const dmChannel = await withTimeout(
+          () => client.rest.post(Routes.userChannels(), {
+            body: { recipient_id: discordUserId }
+          }),
+          3500,
+          "discord_dm_channel_timeout"
+        );
+
+        await withTimeout(
+          () => client.rest.post(Routes.channelMessages(dmChannel.id), {
+            body: {
+              content: payload?.content || undefined,
+              embeds: restEmbeds
+            }
+          }),
+          3500,
+          "discord_dm_send_timeout"
+        );
+
+        return { ok: true, delivery: "dm_rest" };
+      }
+    ];
+
+    let lastError = "dm_delivery_failed";
+
+    for (let index = 0; index < quickAttempts.length; index += 1) {
+      try {
+        const result = await quickAttempts[index]();
+        if (result?.ok) {
+          return result;
+        }
+        if (result?.error) {
+          lastError = result.error;
+        }
+      } catch (error) {
+        lastError = error?.message || lastError;
+      }
+
+      if (index < quickAttempts.length - 1) {
+        await delay(350);
+      }
+    }
+
+    return { ok: false, error: lastError || "dm_delivery_failed" };
+  }
+
   async function withTimeout(promiseFactory, timeoutMs = 5000, timeoutError = "timeout") {
     let timer = null;
 
@@ -755,20 +850,7 @@ export function registerWebsiteRoutes(app, deps) {
 
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
-      pendingWebsiteLoginVerifications.set(verificationId, {
-        verificationId,
-        code,
-        discordUserId: account.discordUserId,
-        robloxUsername: account.robloxUsername,
-        accountNumber: account.accountNumber,
-        expiresAt,
-        used: false,
-        deliveryStatus: "pending",
-        deliveryError: null,
-        deliveryCompletedAt: null
-      });
-
-      void sendWebsiteVerificationDm(
+      const deliveryResult = await sendWebsiteVerificationDmForLogin(
         account.discordUserId,
         buildWebsiteVerificationDmPayload({
           verificationId,
@@ -777,46 +859,51 @@ export function registerWebsiteRoutes(app, deps) {
           code,
           expiresAt: deliveryExpiresAt
         })
-      ).then((deliveryResult) => {
-        console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+      );
+
+      console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
+        robloxUsername,
+        discordUserId: account.discordUserId,
+        ok: Boolean(deliveryResult?.ok),
+        error: deliveryResult?.error || null
+      }));
+
+      if (!deliveryResult.ok && !softWebsiteDeliveryErrors.has(deliveryResult.error || "")) {
+        return res.status(409).json({
+          ok: false,
+          error: deliveryResult.error || "dm_delivery_failed",
+          linkedDiscordUserId: account.discordUserId,
+          accountNumber: account.accountNumber
+        });
+      }
+
+      if (!deliveryResult.ok) {
+        console.warn("[WEBSITE LOGIN] Delivery returned timeout-like error, proceeding as soft success.", JSON.stringify({
           robloxUsername,
           discordUserId: account.discordUserId,
-          ok: Boolean(deliveryResult?.ok),
-          error: deliveryResult?.error || null
+          error: deliveryResult.error || "unknown_delivery_error"
         }));
+      }
 
-        const current = pendingWebsiteLoginVerifications.get(verificationId);
-        if (!current || current.used) {
-          return;
-        }
-
-        pendingWebsiteLoginVerifications.set(verificationId, {
-          ...current,
-          deliveryStatus: deliveryResult?.ok ? "sent" : (softWebsiteDeliveryErrors.has(deliveryResult?.error || "") ? "uncertain" : "failed"),
-          deliveryError: deliveryResult?.ok ? null : (deliveryResult?.error || "dm_delivery_failed"),
-          deliveryCompletedAt: new Date().toISOString()
-        });
-      }).catch((error) => {
-        console.error("[WEBSITE LOGIN] background delivery failure", error);
-        const current = pendingWebsiteLoginVerifications.get(verificationId);
-        if (!current || current.used) {
-          return;
-        }
-
-        pendingWebsiteLoginVerifications.set(verificationId, {
-          ...current,
-          deliveryStatus: "failed",
-          deliveryError: error?.message || "dm_delivery_failed",
-          deliveryCompletedAt: new Date().toISOString()
-        });
+      pendingWebsiteLoginVerifications.set(verificationId, {
+        verificationId,
+        code,
+        discordUserId: account.discordUserId,
+        robloxUsername: account.robloxUsername,
+        accountNumber: account.accountNumber,
+        expiresAt,
+        used: false,
+        deliveryStatus: deliveryResult.ok ? "sent" : "uncertain",
+        deliveryError: deliveryResult.ok ? null : (deliveryResult.error || null),
+        deliveryCompletedAt: new Date().toISOString()
       });
 
-      return res.status(202).json({
+      return res.status(200).json({
         ok: true,
         verificationId,
         expiresAt,
         maskedAccountNumber: account.accountNumber ? `****${String(account.accountNumber).slice(-2)}` : null,
-        delivery: "pending"
+        delivery: "dm"
       });
     } catch (error) {
       console.error("Website mobile-request-code primary handler failure:", error);
