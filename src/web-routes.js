@@ -271,31 +271,21 @@ export function registerWebsiteRoutes(app, deps) {
       .map((project) => ensureProjectState(project.key) || project)
       .filter((project) => getProjectDefinition(project.key)?.type === "showroom");
 
-    const offersByVehicleKey = new Map();
-    const activeRentalByVehicleKey = new Map();
+    const activeRentalByListingKey = new Map();
     const now = Date.now();
     for (const project of showroomProjects) {
       for (const rental of Array.isArray(project.rentals) ? project.rentals : []) {
         const expiresAt = rental?.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
-        if (!rental?.vehicleName || expiresAt <= now) {
+        if (!rental?.vehicleName || !rental?.projectKey || expiresAt <= now) {
           continue;
         }
 
-        const rentalKey = normalizeVehicleName(rental.vehicleName);
-        if (!rentalKey || activeRentalByVehicleKey.has(rentalKey)) {
+        const rentalKey = `${String(rental.projectKey).trim()}|${normalizeVehicleName(rental.vehicleName)}`;
+        if (!rentalKey || activeRentalByListingKey.has(rentalKey)) {
           continue;
         }
 
-        activeRentalByVehicleKey.set(rentalKey, rental);
-      }
-
-      for (const vehicle of Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []) {
-        const snapshot = buildWebsiteRentalOfferSnapshot(project, vehicle);
-        const key = normalizeVehicleName(snapshot.vehicleName);
-        if (!offersByVehicleKey.has(key)) {
-          offersByVehicleKey.set(key, []);
-        }
-        offersByVehicleKey.get(key).push(snapshot);
+        activeRentalByListingKey.set(rentalKey, rental);
       }
     }
 
@@ -305,33 +295,39 @@ export function registerWebsiteRoutes(app, deps) {
         .filter(Boolean)
     );
 
-    return getSortedVehicleCatalog()
-      .map((vehicle) => {
-        const meta = getVehicleShowroomMetaRecord(vehicle.name);
-        if (meta?.hidden) {
-          return null;
-        }
+    return showroomProjects
+      .flatMap((project) =>
+        (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []).map((vehicle) => {
+          const offer = buildWebsiteRentalOfferSnapshot(project, vehicle);
+          const listingKey = `${project.key}|${normalizeVehicleName(offer.vehicleName)}`;
+          const activeRental = activeRentalByListingKey.get(listingKey) || null;
+          const normalizedVehicleName = normalizeVehicleName(offer.vehicleName);
+          const meta = getVehicleShowroomMetaRecord(offer.vehicleName);
 
-        const key = normalizeVehicleName(vehicle.name);
-        const offers = offersByVehicleKey.get(key) || [];
-        const activeRental = activeRentalByVehicleKey.get(key) || null;
-        return {
-          name: vehicle.name,
-          price: Number(vehicle.price || 0),
-          isFree: Boolean(vehicle.isFree),
-          owned: ownedVehicleNames.has(key),
-          image: meta?.image || "",
-          description: meta?.description || "",
-          speed: Number(meta?.speed || 0),
-          acceleration: meta?.acceleration || "",
-          seats: Number(meta?.seats || 4),
-          hidden: Boolean(meta?.hidden),
-          rentable: offers.some((offer) => offer.rentable) && !activeRental,
-          currentRenter: activeRental?.userId || null,
-          availableUntil: activeRental?.expiresAt || null,
-          rentalOffers: offers
-        };
-      })
+          if (meta?.hidden || offer.hidden) {
+            return null;
+          }
+
+          return {
+            name: offer.vehicleName,
+            price: 0,
+            isFree: false,
+            owned: ownedVehicleNames.has(normalizedVehicleName),
+            image: offer.image || meta?.image || "",
+            description: offer.description || meta?.description || "",
+            speed: Number(offer.speed || meta?.speed || 0),
+            acceleration: offer.acceleration || meta?.acceleration || "",
+            seats: Number(offer.seats || meta?.seats || 4),
+            hidden: false,
+            rentable: Boolean(offer.rentable) && !activeRental,
+            currentRenter: activeRental?.userId || null,
+            availableUntil: activeRental?.expiresAt || null,
+            projectKey: offer.projectKey,
+            projectName: offer.projectName,
+            rentalOffers: [offer]
+          };
+        })
+      )
       .filter(Boolean);
   }
 
@@ -2090,6 +2086,15 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(404).json({ ok: false, error: "rental_offer_not_found" });
       }
 
+      const existingActiveRental = (Array.isArray(project.rentals) ? project.rentals : []).find((entry) => {
+        const expiresAt = entry?.expiresAt ? new Date(entry.expiresAt).getTime() : 0;
+        return normalizeVehicleName(entry?.vehicleName) === normalizeVehicleName(vehicleName) && expiresAt > Date.now();
+      });
+
+      if (existingActiveRental) {
+        return res.status(409).json({ ok: false, error: "rental_vehicle_already_booked" });
+      }
+
       const pricePerHour = Number(offerRecord.pricePerHour || 0);
       const pricePerDay = Number(offerRecord.pricePerDay || 0);
       const unitPrice = durationUnit === "day" ? pricePerDay : pricePerHour;
@@ -2163,7 +2168,19 @@ export function registerWebsiteRoutes(app, deps) {
         ]
       }));
 
-      await client.users.fetch(authResult.account.discordUserId)
+      const responsePayload = {
+        ok: true,
+        rentalId,
+        expiresAt,
+        totalPrice,
+        durationUnit,
+        durationValue,
+        account: buildWebsiteAccountSnapshot(updatedAccount),
+        project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
+        projectBudget: projectIncomeResult?.project?.budget ?? updatedProject?.budget ?? 0
+      };
+
+      void client.users.fetch(authResult.account.discordUserId)
         .then((user) => user.send({
           embeds: [
             new EmbedBuilder()
@@ -2183,17 +2200,7 @@ export function registerWebsiteRoutes(app, deps) {
         }).catch(() => null))
         .catch(() => null);
 
-      return res.status(200).json({
-        ok: true,
-        rentalId,
-        expiresAt,
-        totalPrice,
-        durationUnit,
-        durationValue,
-        account: buildWebsiteAccountSnapshot(updatedAccount),
-        project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
-        projectBudget: projectIncomeResult?.project?.budget ?? updatedProject?.budget ?? 0
-      });
+      return res.status(200).json(responsePayload);
     } catch (error) {
       console.error("Website rentals book failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
