@@ -1163,6 +1163,46 @@ export function listActiveRentalsForUser(userId, at = Date.now()) {
     });
 }
 
+export function listActiveRentalsMatchingVehicle(vehicleName, at = Date.now()) {
+  const store = ensureProjectStoreShape(readStore());
+  const timestamp = Number(at) || Date.now();
+  const lookupKey = normalizeVehicleLookupKey(vehicleName);
+  const comparableTarget = normalizeVehicleComparableName(vehicleName);
+
+  if (!lookupKey && !comparableTarget) {
+    return [];
+  }
+
+  return Object.values(store.projects)
+    .flatMap((record) => ensureProjectRecordShape(record, { key: record?.key }).rentals || [])
+    .filter((rental) => {
+      const expiresAt = rental?.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
+      if (expiresAt <= timestamp) {
+        return false;
+      }
+
+      const rentalLookupKey = normalizeVehicleLookupKey(rental?.vehicleName);
+      if (lookupKey && rentalLookupKey === lookupKey) {
+        return true;
+      }
+
+      if (areVehicleNamesEquivalent(rental?.vehicleName, vehicleName)) {
+        return true;
+      }
+
+      const comparableRental = normalizeVehicleComparableName(rental?.vehicleName);
+      return Boolean(
+        comparableTarget
+        && comparableRental
+        && (
+          comparableRental === comparableTarget
+          || comparableRental.includes(comparableTarget)
+          || comparableTarget.includes(comparableRental)
+        )
+      );
+    });
+}
+
 export function userOwnsVehicle(userId, vehicleName) {
   const account = getAccount(userId);
   const store = ensureVehicleStoreShape(readStore());
