@@ -13697,6 +13697,7 @@ registerWebsiteRoutes(app, {
   findGuildMemberForWebsiteAccess,
   findGuildMemberByRobloxUsername,
   updateAccount,
+  addOwnedVehicle,
   appendTransaction,
   getFinesForUser,
   listAllFines,
@@ -14193,4 +14194,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
