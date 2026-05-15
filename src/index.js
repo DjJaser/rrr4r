@@ -1872,67 +1872,66 @@ async function processWebsiteCarPurchase({
 
   const beforeBalance = Number(account.balance || 0);
   const vehicleToStore = offer.name || cleanVehicleName;
-  const normalizedVehicleKey = normalizeVehicleName(vehicleToStore);
-  const purchaseCommit = mutateStore((store) => {
-    const current = getMutableAccount(store, account.discordUserId);
-    if (!current) {
+  if (finalPrice > 0) {
+    const debitedAccount = updateAccount(account.discordUserId, (current) => {
+      if (Number(current.balance || 0) < finalPrice) {
+        return current;
+      }
+
+      current.balance -= finalPrice;
+      return current;
+    });
+
+    if (!debitedAccount) {
       return { ok: false, error: "account_not_found" };
     }
 
-    if (Number(current.balance || 0) < finalPrice) {
-      return { ok: false, error: "insufficient_balance" };
+    if (Number(debitedAccount.balance || 0) > beforeBalance) {
+      return { ok: false, error: "vehicle_store_failed" };
     }
+  }
 
-    current.balance -= finalPrice;
-    current.cars ??= {};
-    current.cars[normalizedVehicleKey] = {
-      name: vehicleToStore,
-      purchasedAt: new Date().toISOString(),
-      purchasePrice: finalPrice,
-      grantedBy: "website",
-      source: sourceLabel
-    };
-
-    appendTransactionToStore(store, {
-      discordUserId: current.discordUserId,
-      robloxUsername: current.robloxUsername,
-      type: "website_vehicle_purchase",
-      amount: finalPrice,
-      direction: finalPrice > 0 ? "debit" : "none",
-      balanceAfter: current.balance,
-      metadata: {
-        vehicleName: vehicleToStore,
-        source: sourceLabel
-      }
-    });
-
-    return {
-      ok: true,
-      afterAccount: structuredClone(current)
-    };
+  const ownedVehicle = addOwnedVehicle(account.discordUserId, vehicleToStore, {
+    purchasePrice: finalPrice,
+    grantedBy: account.discordUserId,
+    source: "purchase"
   });
 
-  const afterAccount = purchaseCommit?.afterAccount ?? null;
-  const vehicleStoredSuccessfully = Boolean(afterAccount?.cars?.[normalizedVehicleKey]) && (
+  const afterAccount = getAccount(account.discordUserId);
+  const vehicleStoredSuccessfully = Boolean(ownedVehicle) && Boolean(
     afterAccount?.discordUserId
       ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore)
       : false
   );
 
-  if (!purchaseCommit?.ok || !afterAccount || !vehicleStoredSuccessfully) {
+  if (!afterAccount || !vehicleStoredSuccessfully) {
     console.error("[WEBSITE BUY CAR STORE FAILED]", JSON.stringify({
       discordUserId: account.discordUserId,
       requestedVehicleName: vehicleName,
       cleanVehicleName,
       vehicleToStore,
       updatedBalanceAfterDebit: Number(afterAccount?.balance || 0),
-      storedVehicleName: afterAccount?.cars?.[normalizedVehicleKey]?.name || "",
+      storedVehicleName: ownedVehicle?.name || "",
       afterAccountHasVehicle: afterAccount?.discordUserId ? userOwnsVehicle(afterAccount.discordUserId, vehicleToStore) : false
     }));
-    return purchaseCommit?.ok === false ? purchaseCommit : { ok: false, error: "vehicle_store_failed" };
+    return { ok: false, error: "vehicle_store_failed" };
   }
 
-  void sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
+  appendTransaction({
+    discordUserId: account.discordUserId,
+    robloxUsername: afterAccount.robloxUsername,
+    type: "vehicle_purchase",
+    amount: finalPrice,
+    direction: offer.isFree ? "none" : "debit",
+    balanceAfter: afterAccount.balance,
+    metadata: {
+      vehicleName: vehicleToStore,
+      isFree: offer.isFree,
+      source: sourceLabel
+    }
+  });
+
+  await sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
     title: "🌐 **شراء مركبة من الموقع**",
     description: "**تم شراء مركبة عبر الموقع وخصم قيمتها من الرصيد البنكي بنجاح.**",
     fields: [
@@ -1944,9 +1943,9 @@ async function processWebsiteCarPurchase({
       { name: "💳 **الرصيد قبل**", value: `**${formatCurrency(beforeBalance)}**`, inline: true },
       { name: "💳 **الرصيد بعد**", value: `**${formatCurrency(afterAccount.balance)}**`, inline: true }
     ]
-  }).catch(() => null);
+  });
 
-  void client.users.fetch(account.discordUserId)
+  await client.users.fetch(account.discordUserId)
     .then((user) => user.send({ embeds: [buildWebsiteCarPurchaseDmEmbed({
       account: afterAccount,
       vehicleName: vehicleToStore,
@@ -14214,4 +14213,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
