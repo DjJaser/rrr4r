@@ -1664,7 +1664,7 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
-      await logWebsiteAction({
+      void logWebsiteAction({
         title: "🌐 **شراء مركبة من الموقع**",
         description: "**تم شراء مركبة من الموقع وربطها مباشرة بممتلكات البوت.**",
         fields: [
@@ -1673,7 +1673,7 @@ export function registerWebsiteRoutes(app, deps) {
           { name: "💵 **السعر**", value: `**${formatCurrency(result.price)}**`, inline: true },
           { name: "💳 **الرصيد بعد الشراء**", value: `**${formatCurrency(result.account?.balance || 0)}**`, inline: true }
         ]
-      });
+      }).catch(() => null);
 
       return res.status(200).json({
         ok: true,
@@ -1729,7 +1729,7 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
-      await logWebsiteAction({
+      void logWebsiteAction({
         title: "🌐 **بيع مركبة من الموقع**",
         description: "**تم بيع مركبة من الموقع وتحديث ممتلكات البوت.**",
         fields: [
@@ -1738,7 +1738,7 @@ export function registerWebsiteRoutes(app, deps) {
           { name: "💵 **المبلغ المسترد**", value: `**${formatCurrency(result.price)}**`, inline: true },
           { name: "💳 **الرصيد بعد البيع**", value: `**${formatCurrency(result.account?.balance || 0)}**`, inline: true }
         ]
-      });
+      }).catch(() => null);
 
       return res.status(200).json({
         ok: true,
@@ -1804,7 +1804,7 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
-      await logWebsiteAction({
+      void logWebsiteAction({
         title: "🌐 **تحويل بنكي من الموقع**",
         description: "**تم تنفيذ تحويل بنكي من الموقع وتسجيله داخل النظام.**",
         fields: [
@@ -1813,7 +1813,7 @@ export function registerWebsiteRoutes(app, deps) {
           { name: "🎯 **المستفيد**", value: `**${result.targetAccount?.name || result.targetAccount?.robloxUsername || "غير معروف"}**`, inline: true },
           { name: "💳 **الرصيد بعد التحويل**", value: `**${formatCurrency(result.senderAccount?.balance || 0)}**`, inline: true }
         ]
-      });
+      }).catch(() => null);
 
       return res.status(200).json({
         ok: true,
