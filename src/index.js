@@ -179,6 +179,7 @@ import {
   getAccount,
   getPendingPin,
   getVehicleShowroomMetaRecord,
+  listVehicleShowroomMetaRecords,
   getVehiclePriceRecord,
   listAllTransactions,
   listAllFines,
@@ -13716,6 +13717,7 @@ app.post("/api/weapon-check", async (req, res) => {
     BUDGET_KEYS,
     PROJECT_DEFINITIONS,
     getVehicleShowroomMetaRecord,
+    listVehicleShowroomMetaRecords,
     upsertVehicleShowroomMeta,
     upsertProject,
   appendProjectTransaction
@@ -14213,3 +14215,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
