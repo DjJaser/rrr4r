@@ -2083,6 +2083,17 @@ export function registerWebsiteRoutes(app, deps) {
         .find((entry) => normalizeVehicleName(entry.vehicleName) === normalizeVehicleName(vehicleName));
 
       if (!offerRecord) {
+        console.error("[WEB RENTAL BOOK NOT FOUND]", JSON.stringify({
+          projectKey,
+          requestedVehicleName: vehicleName,
+          normalizedRequestedVehicleName: normalizeVehicleName(vehicleName),
+          availableProjectVehicles: (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []).map((entry) => ({
+            vehicleName: entry?.vehicleName || "",
+            normalizedVehicleName: normalizeVehicleName(entry?.vehicleName || ""),
+            pricePerHour: Number(entry?.pricePerHour || 0),
+            pricePerDay: Number(entry?.pricePerDay || 0)
+          }))
+        }));
         return res.status(404).json({ ok: false, error: "rental_offer_not_found" });
       }
 
