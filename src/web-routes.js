@@ -24,6 +24,8 @@ export function registerWebsiteRoutes(app, deps) {
     processWebsiteCarSale,
     processWebsiteBankTransfer,
     sendWebsiteNameChangeRequest,
+    sendSystemLogs,
+    sendFinePaymentLog,
     findGuildMemberForWebsiteAccess,
     findGuildMemberByRobloxUsername,
     updateAccount,
@@ -45,6 +47,21 @@ export function registerWebsiteRoutes(app, deps) {
   function isAuthorizedInternalRequest(req) {
     const apiKey = String(req.headers["x-api-key"] || req.headers["x-internal-api-key"] || "").trim();
     return Boolean(apiKey) && apiKey === config.internalApiKey;
+  }
+
+  async function logWebsiteAction(payload) {
+    if (typeof sendSystemLogs !== "function") {
+      return;
+    }
+
+    await sendSystemLogs([config.websiteLogChannelId || "1503717012315308123"], payload).catch(() => null);
+  }
+
+  function buildWebsiteActorFields(account) {
+    return [
+      { name: "👤 **صاحب الحساب**", value: `**<@${account?.discordUserId || "0"}>**`, inline: true },
+      { name: "🎮 **يوزر روبلوكس**", value: `**${account?.robloxUsername || "غير معروف"}**`, inline: true }
+    ];
   }
 
   function buildWebsiteAccountSnapshot(account) {
@@ -1585,12 +1602,24 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
+      await logWebsiteAction({
+        title: "🌐 **شراء مركبة من الموقع**",
+        description: "**تم شراء مركبة من الموقع وربطها مباشرة بممتلكات البوت.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🚘 **المركبة**", value: `**${result.vehicleName}**`, inline: true },
+          { name: "💵 **السعر**", value: `**${formatCurrency(result.price)}**`, inline: true },
+          { name: "💳 **الرصيد بعد الشراء**", value: `**${formatCurrency(result.account?.balance || 0)}**`, inline: true }
+        ]
+      });
+
       return res.status(200).json({
         ok: true,
         vehicleName: result.vehicleName,
         price: result.price,
         account: buildWebsiteAccountSnapshot(result.account)
       });
+      
     } catch (error) {
       console.error("Website buy-car failure:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
@@ -1637,6 +1666,17 @@ export function registerWebsiteRoutes(app, deps) {
           account: result.account ? buildWebsiteAccountSnapshot(result.account) : null
         });
       }
+
+      await logWebsiteAction({
+        title: "🌐 **بيع مركبة من الموقع**",
+        description: "**تم بيع مركبة من الموقع وتحديث ممتلكات البوت.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🚘 **المركبة**", value: `**${result.vehicleName}**`, inline: true },
+          { name: "💵 **المبلغ المسترد**", value: `**${formatCurrency(result.price)}**`, inline: true },
+          { name: "💳 **الرصيد بعد البيع**", value: `**${formatCurrency(result.account?.balance || 0)}**`, inline: true }
+        ]
+      });
 
       return res.status(200).json({
         ok: true,
@@ -1701,6 +1741,17 @@ export function registerWebsiteRoutes(app, deps) {
           account: buildWebsiteAccountSnapshot(getAccount(authResult.account.discordUserId))
         });
       }
+
+      await logWebsiteAction({
+        title: "🌐 **تحويل بنكي من الموقع**",
+        description: "**تم تنفيذ تحويل بنكي من الموقع وتسجيله داخل النظام.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "💵 **المبلغ**", value: `**${formatCurrency(result.amount || amount)}**`, inline: true },
+          { name: "🎯 **المستفيد**", value: `**${result.targetAccount?.name || result.targetAccount?.robloxUsername || "غير معروف"}**`, inline: true },
+          { name: "💳 **الرصيد بعد التحويل**", value: `**${formatCurrency(result.senderAccount?.balance || 0)}**`, inline: true }
+        ]
+      });
 
       return res.status(200).json({
         ok: true,
@@ -1944,6 +1995,19 @@ export function registerWebsiteRoutes(app, deps) {
         note: `${canonicalVehicleName} | ساعة: ${nextVehicle.pricePerHour} | يوم: ${nextVehicle.pricePerDay}`
       });
 
+      await logWebsiteAction({
+        title: "🌐 **حفظ مركبة تأجير من الموقع**",
+        description: "**تم حفظ مركبة تأجير داخل مشروع المعرض.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🏢 **المشروع**", value: `**${updatedProject.name || definition?.title || projectKey}**`, inline: true },
+          { name: "🚘 **المركبة**", value: `**${canonicalVehicleName}**`, inline: true },
+          { name: "🕐 **سعر الساعة**", value: `**${formatCurrency(nextVehicle.pricePerHour)}**`, inline: true },
+          { name: "📅 **سعر اليوم**", value: `**${formatCurrency(nextVehicle.pricePerDay)}**`, inline: true },
+          { name: "📦 **عدد المركبات الآن**", value: `**${Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0}**`, inline: true }
+        ]
+      });
+
       return res.status(200).json({
         ok: true,
         project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
@@ -2024,6 +2088,17 @@ export function registerWebsiteRoutes(app, deps) {
         direction: "none",
         actorUserId: authResult.account.discordUserId,
         note: existingVehicle.vehicleName || vehicleName
+      });
+
+      await logWebsiteAction({
+        title: "🌐 **حذف مركبة تأجير من الموقع**",
+        description: "**تم حذف مركبة من قائمة تأجير مشروع المعرض عبر الموقع.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🏢 **المشروع**", value: `**${updatedProject.name || definition?.title || projectKey}**`, inline: true },
+          { name: "🚘 **المركبة**", value: `**${existingVehicle.vehicleName || vehicleName}**`, inline: true },
+          { name: "📦 **المتبقي الآن**", value: `**${Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0}**`, inline: true }
+        ]
       });
 
       return res.status(200).json({
@@ -2224,6 +2299,20 @@ export function registerWebsiteRoutes(app, deps) {
         projectBudget: projectIncomeResult?.project?.budget ?? updatedProject?.budget ?? 0
       };
 
+      await logWebsiteAction({
+        title: "🌐 **تأجير مركبة من الموقع**",
+        description: "**تم تسجيل تأجير مركبة عبر الموقع وربطها بممتلكات البوت بشكل فعلي.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🏢 **المعرض**", value: `**${updatedProject.name || definition?.title || projectKey}**`, inline: true },
+          { name: "🚘 **المركبة**", value: `**${offerRecord.vehicleName}**`, inline: true },
+          { name: "💵 **الإجمالي**", value: `**${formatCurrency(totalPrice)}**`, inline: true },
+          { name: "⏳ **المدة**", value: `**${durationValue} ${durationUnit === "day" ? "يوم" : "ساعة"}**`, inline: true },
+          { name: "🕒 **ينتهي**", value: `**<t:${Math.floor(new Date(expiresAt).getTime() / 1000)}:R>**`, inline: true },
+          { name: "🏦 **ميزانية المشروع بعد الحجز**", value: `**${formatCurrency(projectIncomeResult?.project?.budget ?? updatedProject?.budget ?? 0)}**`, inline: true }
+        ]
+      });
+
       void client.users.fetch(authResult.account.discordUserId)
         .then((user) => user.send({
           embeds: [
@@ -2341,6 +2430,36 @@ export function registerWebsiteRoutes(app, deps) {
         label: "دخل مخالفة من الموقع",
         note: `المخالفة #${fineId}`
       });
+
+      await logWebsiteAction({
+        title: "🌐 **سداد مخالفة من الموقع**",
+        description: "**تم سداد مخالفة عبر الموقع وتحديث الحساب والميزانية الأمنية.**",
+        fields: [
+          ...buildWebsiteActorFields(authResult.account),
+          { name: "🪪 **رقم المخالفة**", value: `**#${fineId}**`, inline: true },
+          { name: "💵 **المبلغ**", value: `**${formatCurrency(fine.amount)}**`, inline: true },
+          { name: "🏦 **الرصيد بعد السداد**", value: `**${formatCurrency(updatedAccount?.balance || 0)}**`, inline: true },
+          { name: "📄 **السبب**", value: `**${fine.reason || "غير محدد"}**`, inline: false }
+        ]
+      });
+
+      if (typeof sendFinePaymentLog === "function") {
+        await sendFinePaymentLog({
+          title: "✅ **سداد مخالفة من الموقع**",
+          description: "**تم سداد مخالفة عبر الموقع وربط العملية مباشرة مع البوت والميزانية الأمنية.**",
+          color: 0x1f6b45,
+          fields: [
+            { name: "👤 **صاحب الحساب**", value: `**<@${authResult.account.discordUserId}>**`, inline: true },
+            { name: "🎮 **يوزر روبلوكس**", value: `**${updatedAccount?.robloxUsername || authResult.account.robloxUsername || "غير معروف"}**`, inline: true },
+            { name: "🪪 **رقم المخالفة**", value: `**#${fineId}**`, inline: true },
+            { name: "💵 **المبلغ**", value: `**${formatCurrency(fine.amount)}**`, inline: true },
+            { name: "🏦 **الرصيد بعد السداد**", value: `**${formatCurrency(updatedAccount?.balance || 0)}**`, inline: true },
+            { name: "📄 **السبب**", value: `**${fine.reason || "غير محدد"}**`, inline: false },
+            { name: "🗂️ **الحالة**", value: `**${String(updatedFine?.status || "paid")}**`, inline: true },
+            { name: "🕒 **وقت السداد**", value: `**<t:${Math.floor(Date.now() / 1000)}:F>**`, inline: true }
+          ]
+        }).catch(() => null);
+      }
 
       await client.users.fetch(authResult.account.discordUserId)
         .then((user) => user.send({
