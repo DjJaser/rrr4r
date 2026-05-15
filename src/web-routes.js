@@ -1929,6 +1929,17 @@ export function registerWebsiteRoutes(app, deps) {
         };
       });
 
+      console.info("[WEB SHOWROOM VEHICLE SAVED]", JSON.stringify({
+        projectKey,
+        vehicleName: canonicalVehicleName,
+        showroomVehiclesCount: Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0,
+        showroomVehicles: (Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles : []).map((entry) => ({
+          vehicleName: entry?.vehicleName || "",
+          pricePerHour: Number(entry?.pricePerHour || 0),
+          pricePerDay: Number(entry?.pricePerDay || 0)
+        }))
+      }));
+
       appendProjectTransaction({
         projectKey,
         type: "showroom_vehicle_configured",
@@ -2003,6 +2014,12 @@ export function registerWebsiteRoutes(app, deps) {
         ...current,
         showroomVehicles: (Array.isArray(current.showroomVehicles) ? current.showroomVehicles : [])
           .filter((entry) => normalizeVehicleName(entry?.vehicleName) !== normalizedVehicleName)
+      }));
+
+      console.info("[WEB SHOWROOM VEHICLE DELETED]", JSON.stringify({
+        projectKey,
+        vehicleName: existingVehicle.vehicleName || vehicleName,
+        showroomVehiclesCount: Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0
       }));
 
       appendProjectTransaction({
@@ -2177,6 +2194,17 @@ export function registerWebsiteRoutes(app, deps) {
             pricePerDay
           }
         ]
+      }));
+
+      console.info("[WEB RENTAL BOOKED]", JSON.stringify({
+        projectKey,
+        vehicleName: offerRecord.vehicleName,
+        rentalId,
+        renterUserId: authResult.account.discordUserId,
+        projectBudgetAfter: Number(updatedProject?.budget || 0),
+        rentalsCount: Array.isArray(updatedProject?.rentals) ? updatedProject.rentals.length : 0,
+        showroomVehiclesCount: Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0,
+        expiresAt
       }));
 
       const responsePayload = {
