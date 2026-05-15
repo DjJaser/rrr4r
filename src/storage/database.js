@@ -1077,7 +1077,11 @@ export function addOwnedVehicle(userId, vehicleName, metadata = {}) {
     purchasedAt: new Date().toISOString(),
     purchasePrice: Number(metadata.purchasePrice ?? 0),
     grantedBy: metadata.grantedBy ?? null,
-    source: metadata.source ?? "purchase"
+    source: metadata.source ?? "purchase",
+    expiresAt: metadata.expiresAt ?? null,
+    rentalId: metadata.rentalId ?? null,
+    projectKey: metadata.projectKey ?? null,
+    projectName: metadata.projectName ?? null
   };
 
   writeStore(store);
@@ -1305,6 +1309,58 @@ export function findOwnedVehicleMatch(userId, vehicleName) {
 export function resolveRegisteredVehicleName(vehicleName) {
   const store = ensureVehicleStoreShape(readStore());
   return resolveRegisteredVehicleNameFromStore(store, vehicleName);
+}
+
+export function processExpiredRentalOwnerships(at = Date.now()) {
+  const store = ensureVehicleStoreShape(ensureProjectStoreShape(readStore()));
+  const timestamp = Number(at) || Date.now();
+  let removedRentalCars = 0;
+  let removedRentalEntries = 0;
+
+  for (const account of Object.values(store.accounts ?? {})) {
+    ensureAccountShape(account);
+    const nextCars = {};
+
+    for (const [vehicleKey, record] of Object.entries(account.cars ?? {})) {
+      const isRentalVehicle = String(record?.source || "") === "rental";
+      const expiresAt = record?.expiresAt ? new Date(record.expiresAt).getTime() : 0;
+      if (isRentalVehicle && expiresAt > 0 && expiresAt <= timestamp) {
+        removedRentalCars += 1;
+        continue;
+      }
+
+      nextCars[vehicleKey] = record;
+    }
+
+    account.cars = nextCars;
+  }
+
+  for (const projectKey of Object.keys(store.projects ?? {})) {
+    const current = ensureProjectRecordShape(store.projects[projectKey] ?? {}, { key: projectKey });
+    const currentRentals = Array.isArray(current.rentals) ? current.rentals : [];
+    const nextRentals = currentRentals.filter((rental) => {
+      const expiresAt = rental?.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
+      const keep = expiresAt > timestamp;
+      if (!keep) {
+        removedRentalEntries += 1;
+      }
+      return keep;
+    });
+
+    store.projects[projectKey] = ensureProjectRecordShape({
+      ...current,
+      rentals: nextRentals
+    }, { key: projectKey });
+  }
+
+  if (removedRentalCars > 0 || removedRentalEntries > 0) {
+    writeStore(store);
+  }
+
+  return {
+    removedRentalCars,
+    removedRentalEntries
+  };
 }
 
 export function repairAllVehicleOwnershipRecords() {
