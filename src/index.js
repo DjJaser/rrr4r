@@ -187,6 +187,7 @@ import {
   listProjectTransactions,
   listTransactionsForUser,
   listOwnedVehicles,
+  listActiveRentalsMatchingVehicle,
   findOwnedVehicleMatch,
   listVehicleCatalog,
   removeFine,
@@ -3721,13 +3722,34 @@ async function pollActiveVehicles() {
     const linkedAccount = ownerResolution?.account ?? null;
 
     const possibleVehicleOwners = findAccountsOwningVehicle(canonicalVehicleName);
+    const matchingVehicleRentals = [
+      ...listActiveRentalsMatchingVehicle(canonicalVehicleName),
+      ...listActiveRentalsMatchingVehicle(parsed.vehicleName)
+    ].filter((rental, index, rentals) => {
+      if (!rental?.rentalId) {
+        return true;
+      }
+
+      return rentals.findIndex((entry) => entry?.rentalId === rental.rentalId) === index;
+    });
+    const rentalVehicleOwnerAccounts = matchingVehicleRentals
+      .map((rental) => getAccount(rental?.userId))
+      .filter((account, index, accounts) =>
+        account?.discordUserId
+        && accounts.findIndex((entry) => entry?.discordUserId === account.discordUserId) === index
+      );
     const matchedPossibleOwner = possibleVehicleOwners.find((account) =>
       robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
     );
-    const verifiedOwnerAccount = matchedPossibleOwner || linkedAccount;
+    const matchedRentalOwner = rentalVehicleOwnerAccounts.find((account) =>
+      robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
+    );
+    const verifiedOwnerAccount = matchedPossibleOwner || matchedRentalOwner || linkedAccount || rentalVehicleOwnerAccounts[0] || null;
     const hasConfidentOwnerMatch = Boolean(
       matchedPossibleOwner?.discordUserId
+      || matchedRentalOwner?.discordUserId
       || (ownerResolution?.confident && linkedAccount?.discordUserId)
+      || rentalVehicleOwnerAccounts.length === 1
     );
 
     if (!hasConfidentOwnerMatch && possibleVehicleOwners.length === 1) {
@@ -3757,7 +3779,7 @@ async function pollActiveVehicles() {
     const ownedVehicleMatchByRawName = verifiedOwnerAccount?.discordUserId
       ? findOwnedVehicleMatch(verifiedOwnerAccount.discordUserId, parsed.vehicleName)
       : null;
-    const fallbackVehicleOwner = possibleVehicleOwners.find((account) => {
+    const fallbackVehicleOwner = [...possibleVehicleOwners, ...rentalVehicleOwnerAccounts].find((account) => {
       if (!account?.discordUserId) {
         return false;
       }
