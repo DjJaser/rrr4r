@@ -3763,6 +3763,11 @@ async function pollActiveVehicles() {
       continue;
     }
 
+    if (matchingVehicleRentals.length > 0) {
+      processedVehicleIds.set(uniqueKey, Date.now());
+      continue;
+    }
+
     if (!hasConfidentOwnerMatch || !verifiedOwnerAccount?.discordUserId) {
       const skipLogKey = `${normalizeVehicleName(ownerUsername)}|${normalizeVehicleName(canonicalVehicleName)}`;
       const lastSkipLogAt = recentVehicleSkipLogs.get(skipLogKey) || 0;
@@ -14110,3 +14115,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
