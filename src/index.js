@@ -7324,7 +7324,7 @@ function buildSingleBudgetPurchaseDraft({ budgetKey, purchaseType, itemKey }) {
 }
 
 async function respondWithOwnedCars(interaction, userId) {
-  const ownedCars = listOwnedVehicles(userId);
+  const ownedCars = listOwnedVehicles(userId, { includeRentals: true });
 
   try {
     const ownedCarsCard = await buildOwnedCarsCardAttachment(ownedCars);
@@ -8610,7 +8610,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const ownedVehicles = listOwnedVehicles(member.id);
+        const ownedVehicles = listOwnedVehicles(member.id, { includeRentals: true });
         const recentTransactions = listTransactionsForUser(member.id, 12);
         const weaponLines = buildAccountInfoWeaponLines(account);
         const transactionLines = recentTransactions.map((entry) => formatAccountInfoTransactionLine(entry));
@@ -14063,3 +14063,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
