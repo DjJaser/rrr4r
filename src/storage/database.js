@@ -183,10 +183,42 @@ function normalizeVehicleComparableName(value) {
 }
 
 function getVehicleComparableTokens(value) {
-  return normalizeVehicleComparableName(value)
+  const rawTokens = normalizeVehicleComparableName(value)
     .split(" ")
     .map((token) => token.trim())
     .filter((token) => token && token.length > 1);
+
+  if (!rawTokens.length) {
+    return [];
+  }
+
+  const mergedTokens = [];
+  for (let index = 0; index < rawTokens.length; index += 1) {
+    const current = rawTokens[index];
+    const next = rawTokens[index + 1] || "";
+
+    if (/^[A-Z]$/.test(current) && /^\d{1,4}[A-Z]{0,2}$/.test(next)) {
+      mergedTokens.push(`${current}${next}`);
+      index += 1;
+      continue;
+    }
+
+    if (/^\d{1,4}$/.test(current) && /^[A-Z]{1,3}\d{0,3}$/.test(next)) {
+      mergedTokens.push(`${next}${current}`);
+      index += 1;
+      continue;
+    }
+
+    if (/^[A-Z]{1,3}$/.test(current) && /^\d{1,4}$/.test(next)) {
+      mergedTokens.push(`${current}${next}`);
+      index += 1;
+      continue;
+    }
+
+    mergedTokens.push(current);
+  }
+
+  return [...new Set([...rawTokens, ...mergedTokens])];
 }
 
 function getSortedVehicleComparableTokenKey(value) {
@@ -234,6 +266,18 @@ function areVehicleNamesEquivalent(left, right) {
   const minTokenCount = Math.min(leftTokens.length, rightTokens.length);
 
   if (overlap.length >= minTokenCount && overlap.length >= 2) {
+    return true;
+  }
+
+  const fuzzyOverlap = leftTokens.filter((leftToken) =>
+    rightTokens.some((rightToken) =>
+      leftToken === rightToken
+      || leftToken.includes(rightToken)
+      || rightToken.includes(leftToken)
+    )
+  );
+
+  if (fuzzyOverlap.length >= minTokenCount && fuzzyOverlap.length >= 2) {
     return true;
   }
 
