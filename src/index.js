@@ -3738,6 +3738,7 @@ async function pollActiveVehicles() {
         account?.discordUserId
         && accounts.findIndex((entry) => entry?.discordUserId === account.discordUserId) === index
       );
+    const hasSingleMatchingRental = matchingVehicleRentals.length === 1;
     const matchedPossibleOwner = possibleVehicleOwners.find((account) =>
       robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
     );
@@ -3753,6 +3754,11 @@ async function pollActiveVehicles() {
     );
 
     if (!hasConfidentOwnerMatch && possibleVehicleOwners.length === 1) {
+      processedVehicleIds.set(uniqueKey, Date.now());
+      continue;
+    }
+
+    if (!hasConfidentOwnerMatch && hasSingleMatchingRental) {
       processedVehicleIds.set(uniqueKey, Date.now());
       continue;
     }
@@ -3796,6 +3802,7 @@ async function pollActiveVehicles() {
     const ownsVehicle = Boolean(
       ownedVehicleMatchByCanonical
       || ownedVehicleMatchByRawName
+      || hasSingleMatchingRental
       || fallbackVehicleOwner?.discordUserId
     );
 
