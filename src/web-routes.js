@@ -52,7 +52,7 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     const ownedVehicles = account.discordUserId
-      ? listOwnedVehicles(account.discordUserId).map((vehicle) => vehicle.name).filter(Boolean)
+      ? listOwnedVehicles(account.discordUserId, { includeRentals: true }).map((vehicle) => vehicle.name).filter(Boolean)
       : [];
 
     return {
@@ -184,7 +184,7 @@ export function registerWebsiteRoutes(app, deps) {
 
   function buildWebsiteVehicleCatalogForUser(discordUserId) {
     const ownedVehicleNames = new Set(
-      listOwnedVehicles(discordUserId)
+      listOwnedVehicles(discordUserId, { includeRentals: true })
         .map((vehicle) => normalizeVehicleName(vehicle.name))
         .filter(Boolean)
     );
@@ -253,7 +253,23 @@ export function registerWebsiteRoutes(app, deps) {
       .filter((project) => getProjectDefinition(project.key)?.type === "showroom");
 
     const offersByVehicleKey = new Map();
+    const activeRentalByVehicleKey = new Map();
+    const now = Date.now();
     for (const project of showroomProjects) {
+      for (const rental of Array.isArray(project.rentals) ? project.rentals : []) {
+        const expiresAt = rental?.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
+        if (!rental?.vehicleName || expiresAt <= now) {
+          continue;
+        }
+
+        const rentalKey = normalizeVehicleName(rental.vehicleName);
+        if (!rentalKey || activeRentalByVehicleKey.has(rentalKey)) {
+          continue;
+        }
+
+        activeRentalByVehicleKey.set(rentalKey, rental);
+      }
+
       for (const vehicle of Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []) {
         const snapshot = buildWebsiteRentalOfferSnapshot(project, vehicle);
         const key = normalizeVehicleName(snapshot.vehicleName);
@@ -265,7 +281,7 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     const ownedVehicleNames = new Set(
-      listOwnedVehicles(discordUserId)
+      listOwnedVehicles(discordUserId, { includeRentals: true })
         .map((vehicle) => normalizeVehicleName(vehicle.name))
         .filter(Boolean)
     );
@@ -279,6 +295,7 @@ export function registerWebsiteRoutes(app, deps) {
 
         const key = normalizeVehicleName(vehicle.name);
         const offers = offersByVehicleKey.get(key) || [];
+        const activeRental = activeRentalByVehicleKey.get(key) || null;
         return {
           name: vehicle.name,
           price: Number(vehicle.price || 0),
@@ -290,7 +307,9 @@ export function registerWebsiteRoutes(app, deps) {
           acceleration: meta?.acceleration || "",
           seats: Number(meta?.seats || 4),
           hidden: Boolean(meta?.hidden),
-          rentable: offers.some((offer) => offer.rentable),
+          rentable: offers.some((offer) => offer.rentable) && !activeRental,
+          currentRenter: activeRental?.userId || null,
+          availableUntil: activeRental?.expiresAt || null,
           rentalOffers: offers
         };
       })
