@@ -650,12 +650,38 @@ export function allAccounts() {
   return store.accounts;
 }
 
+function normalizeRobloxUsernameLookup(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const afterPipe = raw.includes("|") ? raw.split("|").pop() : raw;
+  const tokens = String(afterPipe || raw)
+    .trim()
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  const preferredToken = tokens.find((token) => {
+    const normalized = token.replace(/[^\w]/g, "");
+    return (
+      normalized.length >= 3
+      && /^[a-z0-9_]+$/i.test(normalized)
+      && !/^m-?\d+$/i.test(token)
+    );
+  });
+
+  const candidate = preferredToken || tokens[0] || raw;
+  return String(candidate).trim().toLowerCase();
+}
+
 export function findAccountByRobloxUsername(robloxUsername) {
   const store = readStore();
-  const normalized = String(robloxUsername || "").trim().toLowerCase();
+  const normalized = normalizeRobloxUsernameLookup(robloxUsername);
 
   const account = Object.values(store.accounts).find((entry) => {
-    return String(entry.robloxUsername || "").trim().toLowerCase() === normalized;
+    return normalizeRobloxUsernameLookup(entry.robloxUsername) === normalized;
   }) ?? null;
 
   return account ? ensureAccountShape(account) : null;
