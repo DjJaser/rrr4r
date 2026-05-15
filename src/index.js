@@ -1932,7 +1932,7 @@ async function processWebsiteCarPurchase({
     return purchaseCommit?.ok === false ? purchaseCommit : { ok: false, error: "vehicle_store_failed" };
   }
 
-  await sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
+  void sendSystemLogs([CARS_LOG_CHANNEL_ID, WEBSITE_LOG_CHANNEL_ID], {
     title: "🌐 **شراء مركبة من الموقع**",
     description: "**تم شراء مركبة عبر الموقع وخصم قيمتها من الرصيد البنكي بنجاح.**",
     fields: [
@@ -1944,9 +1944,9 @@ async function processWebsiteCarPurchase({
       { name: "💳 **الرصيد قبل**", value: `**${formatCurrency(beforeBalance)}**`, inline: true },
       { name: "💳 **الرصيد بعد**", value: `**${formatCurrency(afterAccount.balance)}**`, inline: true }
     ]
-  });
+  }).catch(() => null);
 
-  await client.users.fetch(account.discordUserId)
+  void client.users.fetch(account.discordUserId)
     .then((user) => user.send({ embeds: [buildWebsiteCarPurchaseDmEmbed({
       account: afterAccount,
       vehicleName: vehicleToStore,
@@ -14214,3 +14214,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
