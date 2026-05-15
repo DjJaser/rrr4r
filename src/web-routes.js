@@ -38,6 +38,7 @@ export function registerWebsiteRoutes(app, deps) {
     applyBudgetTransaction,
     applyProjectMoneyMutation,
     BUDGET_KEYS,
+    PROJECT_DEFINITIONS,
     getVehicleShowroomMetaRecord,
     upsertVehicleShowroomMeta,
     upsertProject,
@@ -231,7 +232,22 @@ export function registerWebsiteRoutes(app, deps) {
   }
 
   function buildWebsiteProjectsForUser(discordUserId) {
-    return listProjects()
+    const projectRecords = new Map();
+
+    for (const project of listProjects()) {
+      if (project?.key) {
+        projectRecords.set(project.key, ensureProjectState(project.key) || project);
+      }
+    }
+
+    for (const projectKey of Object.keys(PROJECT_DEFINITIONS || {})) {
+      const ensuredProject = ensureProjectState(projectKey);
+      if (ensuredProject?.key) {
+        projectRecords.set(projectKey, ensuredProject);
+      }
+    }
+
+    return Array.from(projectRecords.values())
       .map((project) => buildWebsiteProjectSnapshot(project, discordUserId))
       .filter((project) => project && project.accessLevel !== "none");
   }
