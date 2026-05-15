@@ -13672,10 +13672,10 @@ app.post("/api/weapon-check", async (req, res) => {
   }
 });
 
-registerWebsiteRoutes(app, {
-  client,
-  config,
-  EmbedBuilder,
+  registerWebsiteRoutes(app, {
+    client,
+    config,
+    EmbedBuilder,
   pendingWebsiteLoginVerifications,
   formatCurrency,
   getAccount,
@@ -13691,12 +13691,14 @@ registerWebsiteRoutes(app, {
   getProjectOwnerMention,
   normalizeVehicleName,
   getSortedVehicleCatalog,
-  processWebsiteCarPurchase,
-  processWebsiteCarSale,
-  processWebsiteBankTransfer,
-  sendWebsiteNameChangeRequest,
-  findGuildMemberForWebsiteAccess,
-  findGuildMemberByRobloxUsername,
+    processWebsiteCarPurchase,
+    processWebsiteCarSale,
+    processWebsiteBankTransfer,
+    sendWebsiteNameChangeRequest,
+    sendSystemLogs,
+    sendFinePaymentLog,
+    findGuildMemberForWebsiteAccess,
+    findGuildMemberByRobloxUsername,
   updateAccount,
   addOwnedVehicle,
   appendTransaction,
@@ -14205,3 +14207,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
