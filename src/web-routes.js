@@ -189,7 +189,26 @@ export function registerWebsiteRoutes(app, deps) {
         .filter(Boolean)
     );
 
-    return getSortedVehicleCatalog()
+    const baseCatalogVehicles = getSortedVehicleCatalog();
+    const seenCatalogKeys = new Set(
+      baseCatalogVehicles
+        .map((vehicle) => normalizeVehicleName(vehicle?.name))
+        .filter(Boolean)
+    );
+
+    const appendedOfferVehicles = [...offersByVehicleKey.entries()]
+      .filter(([key]) => key && !seenCatalogKeys.has(key))
+      .map(([, offers]) => {
+        const primaryOffer = offers?.[0] || {};
+        return {
+          name: String(primaryOffer.vehicleName || "").trim(),
+          price: 0,
+          isFree: false
+        };
+      })
+      .filter((vehicle) => vehicle.name);
+
+    return [...baseCatalogVehicles, ...appendedOfferVehicles]
       .map((vehicle) => {
         const meta = getVehicleShowroomMetaRecord(vehicle.name);
         if (meta?.hidden) {
