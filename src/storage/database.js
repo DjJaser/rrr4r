@@ -1049,25 +1049,68 @@ export function removeOwnedVehicle(userId, vehicleName) {
   return record;
 }
 
-export function listOwnedVehicles(userId) {
+export function listOwnedVehicles(userId, options = {}) {
   const account = getAccount(userId);
   if (!account) {
     return [];
   }
 
-  return Object.values(account.cars ?? {}).sort((left, right) => left.name.localeCompare(right.name));
+  const ownedVehicles = Object.values(account.cars ?? {});
+  if (options.includeRentals !== true) {
+    return ownedVehicles.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  const mergedVehicles = [...ownedVehicles];
+  const ownedKeys = new Set(
+    ownedVehicles
+      .map((vehicle) => normalizeVehicleName(vehicle?.name))
+      .filter(Boolean)
+  );
+
+  for (const rental of listActiveRentalsForUser(userId, options.at)) {
+    const rentalName = prettifyVehicleName(rental?.vehicleName || "");
+    const normalizedRentalName = normalizeVehicleName(rentalName);
+    if (!normalizedRentalName || ownedKeys.has(normalizedRentalName)) {
+      continue;
+    }
+
+    ownedKeys.add(normalizedRentalName);
+    mergedVehicles.push({
+      name: rentalName,
+      source: "rental",
+      rentalId: rental?.rentalId || "",
+      expiresAt: rental?.expiresAt || null,
+      projectKey: rental?.projectKey || null,
+      projectName: rental?.projectName || null,
+      purchasePrice: 0
+    });
+  }
+
+  return mergedVehicles.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || "")));
+}
+
+export function listActiveRentalsForUser(userId, at = Date.now()) {
+  const store = ensureProjectStoreShape(readStore());
+  const timestamp = Number(at) || Date.now();
+
+  return Object.values(store.projects)
+    .flatMap((record) => ensureProjectRecordShape(record, { key: record?.key }).rentals || [])
+    .filter((rental) => {
+      if (!rental || String(rental.userId || "") !== String(userId || "")) {
+        return false;
+      }
+
+      const expiresAt = rental.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
+      return expiresAt > timestamp;
+    });
 }
 
 export function userOwnsVehicle(userId, vehicleName) {
   const account = getAccount(userId);
-  if (!account) {
-    return false;
-  }
-
   const store = ensureVehicleStoreShape(readStore());
   const resolvedVehicleName = resolveRegisteredVehicleNameFromStore(store, vehicleName);
   const normalized = normalizeVehicleName(resolvedVehicleName);
-  if (account.cars?.[normalized]) {
+  if (account?.cars?.[normalized]) {
     return true;
   }
 
@@ -1076,27 +1119,32 @@ export function userOwnsVehicle(userId, vehicleName) {
     return false;
   }
 
-  return Object.entries(account.cars ?? {}).some(([storedKey, record]) => {
+  const ownsPermanently = Object.entries(account?.cars ?? {}).some(([storedKey, record]) => {
     return normalizeVehicleLookupKey(storedKey) === lookupKey
       || normalizeVehicleLookupKey(record?.name) === lookupKey
       || areVehicleNamesEquivalent(record?.name, resolvedVehicleName || vehicleName);
-  }) || Object.values(account.cars ?? {}).some((record) => {
+  }) || Object.values(account?.cars ?? {}).some((record) => {
     return areVehicleNamesEquivalent(record?.name, resolvedVehicleName || vehicleName);
+  });
+
+  if (ownsPermanently) {
+    return true;
+  }
+
+  return listActiveRentalsForUser(userId).some((rental) => {
+    return areVehicleNamesEquivalent(rental?.vehicleName, resolvedVehicleName || vehicleName)
+      || normalizeVehicleLookupKey(rental?.vehicleName) === lookupKey;
   });
 }
 
 export function findOwnedVehicleMatch(userId, vehicleName) {
   const account = getAccount(userId);
-  if (!account) {
-    return null;
-  }
-
   const store = ensureVehicleStoreShape(readStore());
   const resolvedVehicleName = resolveRegisteredVehicleNameFromStore(store, vehicleName);
   const comparableTarget = normalizeVehicleComparableName(resolvedVehicleName || vehicleName);
   const lookupKey = normalizeVehicleLookupKey(resolvedVehicleName || vehicleName);
 
-  const records = Object.values(account.cars ?? {}).filter(Boolean);
+  const records = Object.values(account?.cars ?? {}).filter(Boolean);
   for (const record of records) {
     if (
       normalizeVehicleLookupKey(record?.name) === lookupKey
@@ -1117,6 +1165,30 @@ export function findOwnedVehicleMatch(userId, vehicleName) {
     ) {
       return record;
     }
+  }
+
+  const activeRental = listActiveRentalsForUser(userId).find((rental) => {
+    return normalizeVehicleLookupKey(rental?.vehicleName) === lookupKey
+      || areVehicleNamesEquivalent(rental?.vehicleName, resolvedVehicleName || vehicleName)
+      || (
+        comparableTarget
+        && normalizeVehicleComparableName(rental?.vehicleName)
+        && (
+          normalizeVehicleComparableName(rental?.vehicleName) === comparableTarget
+          || normalizeVehicleComparableName(rental?.vehicleName).includes(comparableTarget)
+          || comparableTarget.includes(normalizeVehicleComparableName(rental?.vehicleName))
+        )
+      );
+  });
+
+  if (activeRental) {
+    return {
+      name: prettifyVehicleName(activeRental.vehicleName),
+      source: "rental",
+      rentalId: activeRental.rentalId || "",
+      expiresAt: activeRental.expiresAt || null,
+      projectKey: activeRental.projectKey || null
+    };
   }
 
   return null;
