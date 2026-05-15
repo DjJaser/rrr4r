@@ -511,6 +511,16 @@ function applyProjectMoneyMutation(projectKey, amount, type, actorUserId, note =
     budget: Number(current.budget || 0) + (isCredit ? numericAmount : -numericAmount)
   }));
 
+  console.info("[PROJECT BUDGET MUTATION]", JSON.stringify({
+    projectKey,
+    type,
+    actorUserId: actorUserId || null,
+    amount: numericAmount,
+    previousBudget: Number(project.budget || 0),
+    nextBudget: Number(updated?.budget || 0),
+    note: String(note || "")
+  }));
+
   const transaction = appendProjectTransaction({
     projectKey,
     type,
