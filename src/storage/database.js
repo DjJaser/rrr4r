@@ -5,18 +5,19 @@ import { BUDGET_DEFINITIONS } from "../budget-system.js";
 
 const configuredDataDir = String(process.env.BOT_DATA_DIR || "").trim();
 const configuredDataFile = String(process.env.BOT_DATA_FILE || "").trim();
+const repoDataDir = path.resolve(process.cwd(), "data");
+const repoDataFile = path.join(repoDataDir, "store.json");
+const previousRuntimeDataDir = path.resolve(process.cwd(), ".aw-data");
+const previousRuntimeDataFile = path.join(previousRuntimeDataDir, "store.json");
+const legacyDataDir = path.resolve("C:\\Users\\Dell\\Documents\\Codex\\2026-04-23-new-chat\\data");
+const legacyDataFile = path.join(legacyDataDir, "store.json");
 
 const runtimeDataDir = configuredDataDir
   ? path.resolve(configuredDataDir)
-  : path.resolve(process.cwd(), ".aw-data");
+  : repoDataDir;
 const runtimeDataFile = configuredDataFile
   ? path.resolve(configuredDataFile)
   : path.join(runtimeDataDir, "store.json");
-
-const repoDataDir = path.resolve(process.cwd(), "data");
-const repoDataFile = path.join(repoDataDir, "store.json");
-const legacyDataDir = path.resolve("C:\\Users\\Dell\\Documents\\Codex\\2026-04-23-new-chat\\data");
-const legacyDataFile = path.join(legacyDataDir, "store.json");
 
 const defaultStore = {
   accounts: {},
@@ -66,7 +67,9 @@ function tryReadJsonFile(filePath) {
 
 function getMigrationSourceFile() {
   const candidates = [
+    runtimeDataFile,
     repoDataFile,
+    previousRuntimeDataFile,
     legacyDataFile
   ].filter((candidate, index, array) => candidate && array.indexOf(candidate) === index);
 
@@ -113,7 +116,14 @@ function ensureStore() {
   if (!storePathLogged) {
     storePathLogged = true;
     console.info(`[STORE] active store file: ${runtimeDataFile}`);
+    console.info(`[STORE] configured BOT_DATA_DIR: ${configuredDataDir || "(default)"}`);
+    console.info(`[STORE] configured BOT_DATA_FILE: ${configuredDataFile || "(default)"}`);
   }
+}
+
+export function getActiveStoreFilePath() {
+  ensureStore();
+  return runtimeDataFile;
 }
 
 function readStore() {
