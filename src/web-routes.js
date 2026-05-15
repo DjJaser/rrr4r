@@ -27,6 +27,7 @@ export function registerWebsiteRoutes(app, deps) {
     findGuildMemberForWebsiteAccess,
     findGuildMemberByRobloxUsername,
     updateAccount,
+    addOwnedVehicle,
     appendTransaction,
     getFinesForUser,
     listAllFines,
@@ -2196,11 +2197,22 @@ export function registerWebsiteRoutes(app, deps) {
         ]
       }));
 
+      const grantedRentalVehicle = addOwnedVehicle(authResult.account.discordUserId, offerRecord.vehicleName, {
+        purchasePrice: 0,
+        grantedBy: "website_rental",
+        source: "rental",
+        expiresAt,
+        rentalId,
+        projectKey,
+        projectName: updatedProject.name || definition?.title || projectKey
+      });
+
       console.info("[WEB RENTAL BOOKED]", JSON.stringify({
         projectKey,
         vehicleName: offerRecord.vehicleName,
         rentalId,
         renterUserId: authResult.account.discordUserId,
+        grantedRentalVehicle: grantedRentalVehicle?.name || null,
         projectBudgetAfter: Number(updatedProject?.budget || 0),
         rentalsCount: Array.isArray(updatedProject?.rentals) ? updatedProject.rentals.length : 0,
         showroomVehiclesCount: Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0,
