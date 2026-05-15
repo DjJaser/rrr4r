@@ -3720,6 +3720,22 @@ async function pollActiveVehicles() {
       canonicalVehicleName
     );
     const linkedAccount = ownerResolution?.account ?? null;
+    const directRobloxAccount = findAccountByRobloxUsername(ownerUsername) || null;
+    const directlyLinkedVehicleOwner = [directRobloxAccount, linkedAccount].find((account) => {
+      if (!account?.discordUserId) {
+        return false;
+      }
+
+      return Boolean(
+        userOwnsVehicle(account.discordUserId, canonicalVehicleName)
+        || userOwnsVehicle(account.discordUserId, parsed.vehicleName)
+      );
+    });
+
+    if (directlyLinkedVehicleOwner?.discordUserId) {
+      processedVehicleIds.set(uniqueKey, Date.now());
+      continue;
+    }
 
     const possibleVehicleOwners = findAccountsOwningVehicle(canonicalVehicleName);
     const matchingVehicleRentals = [
@@ -14115,4 +14131,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
