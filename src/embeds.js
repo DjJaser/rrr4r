@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActionRowBuilder,
   AttachmentBuilder,
   ButtonBuilder,
@@ -824,7 +824,14 @@ export function buildCarPurchaseButtons() {
 
 export function buildOwnedCarsEmbed({ ownedCars }) {
   const description = ownedCars.length
-    ? ownedCars.map((car, index) => `**${index + 1}. ${car.name}**\nقيمة الشراء: **${formatCurrency(car.purchasePrice)}**`).join("\n")
+    ? ownedCars.map((car, index) => {
+      if (car?.source === "rental") {
+        const expiresAt = car?.expiresAt ? Math.floor(new Date(car.expiresAt).getTime() / 1000) : null;
+        return `**${index + 1}. ${car.name} (إيجار)**\nينتهي: **${expiresAt ? `<t:${expiresAt}:R>` : "غير محدد"}**`;
+      }
+
+      return `**${index + 1}. ${car.name}**\nقيمة الشراء: **${formatCurrency(car.purchasePrice)}**`;
+    }).join("\n")
     : "**لا تملك أي مركبات مسجلة حاليًا.**";
 
   return new EmbedBuilder()
