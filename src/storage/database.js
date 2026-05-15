@@ -1373,6 +1373,72 @@ export function processExpiredRentalOwnerships(at = Date.now()) {
   };
 }
 
+export function syncActiveRentalOwnerships(at = Date.now()) {
+  const store = ensureVehicleStoreShape(ensureProjectStoreShape(readStore()));
+  const timestamp = Number(at) || Date.now();
+  let syncedRentalCars = 0;
+
+  for (const projectKey of Object.keys(store.projects ?? {})) {
+    const project = ensureProjectRecordShape(store.projects[projectKey] ?? {}, { key: projectKey });
+    const rentals = Array.isArray(project.rentals) ? project.rentals : [];
+
+    for (const rental of rentals) {
+      const userId = String(rental?.userId || "").trim();
+      const vehicleName = prettifyVehicleName(rental?.vehicleName || "");
+      const expiresAt = rental?.expiresAt ? new Date(rental.expiresAt).getTime() : 0;
+      if (!userId || !vehicleName || expiresAt <= timestamp) {
+        continue;
+      }
+
+      const account = store.accounts?.[userId];
+      if (!account) {
+        continue;
+      }
+
+      ensureAccountShape(account);
+      ensureVehicleRegistered(store, vehicleName);
+      const resolvedVehicleName = resolveRegisteredVehicleNameFromStore(store, vehicleName);
+      const normalizedVehicleKey = normalizeVehicleName(resolvedVehicleName || vehicleName);
+      if (!normalizedVehicleKey) {
+        continue;
+      }
+
+      const currentRecord = account.cars?.[normalizedVehicleKey] ?? null;
+      const nextRecord = {
+        ...(currentRecord || {}),
+        name: prettifyVehicleName(resolvedVehicleName || vehicleName),
+        purchasedAt: currentRecord?.purchasedAt || rental?.startedAt || new Date().toISOString(),
+        purchasePrice: 0,
+        grantedBy: "website_rental",
+        source: "rental",
+        expiresAt: rental.expiresAt || null,
+        rentalId: rental.rentalId || null,
+        projectKey: rental.projectKey || project.key || null,
+        projectName: rental.projectName || project.name || null
+      };
+
+      const changed = !currentRecord
+        || String(currentRecord?.source || "") !== "rental"
+        || String(currentRecord?.rentalId || "") !== String(nextRecord.rentalId || "")
+        || String(currentRecord?.expiresAt || "") !== String(nextRecord.expiresAt || "")
+        || String(currentRecord?.projectKey || "") !== String(nextRecord.projectKey || "");
+
+      account.cars ??= {};
+      account.cars[normalizedVehicleKey] = nextRecord;
+
+      if (changed) {
+        syncedRentalCars += 1;
+      }
+    }
+  }
+
+  if (syncedRentalCars > 0) {
+    writeStore(store);
+  }
+
+  return { syncedRentalCars };
+}
+
 export function repairAllVehicleOwnershipRecords() {
   const store = ensureVehicleStoreShape(readStore());
   let repairedAccounts = 0;
