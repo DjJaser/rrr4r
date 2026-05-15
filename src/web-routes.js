@@ -1935,6 +1935,82 @@ export function registerWebsiteRoutes(app, deps) {
     }
   });
 
+  app.post("/web/projects/showroom-vehicle-delete", async (req, res) => {
+    try {
+      if (!isAuthorizedInternalRequest(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const authResult = authenticateWebsiteAccountFromBody(req.body ?? {}, { requireUsername: true });
+      if (!authResult.ok) {
+        return res.status(authResult.status).json({ ok: false, error: authResult.error });
+      }
+
+      const projectKey = String(req.body?.projectKey || "").trim();
+      const vehicleName = String(req.body?.vehicleName || "").trim();
+
+      if (!projectKey || !vehicleName) {
+        return res.status(400).json({ ok: false, error: "missing_showroom_vehicle_fields" });
+      }
+
+      const project = ensureProjectState(projectKey);
+      const definition = getProjectDefinition(projectKey);
+      if (!project || !definition) {
+        return res.status(404).json({ ok: false, error: "project_not_found" });
+      }
+
+      if (definition.type !== "showroom") {
+        return res.status(400).json({ ok: false, error: "project_not_showroom" });
+      }
+
+      if (!canManageWebsiteProject(authResult.account, project)) {
+        return res.status(403).json({ ok: false, error: "project_access_denied" });
+      }
+
+      const normalizedVehicleName = normalizeVehicleName(vehicleName);
+      const existingVehicle = (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : [])
+        .find((entry) => normalizeVehicleName(entry?.vehicleName) === normalizedVehicleName);
+
+      if (!existingVehicle) {
+        return res.status(404).json({ ok: false, error: "showroom_vehicle_not_found" });
+      }
+
+      const activeRental = (Array.isArray(project.rentals) ? project.rentals : []).find((entry) => {
+        const expiresAt = entry?.expiresAt ? new Date(entry.expiresAt).getTime() : 0;
+        return normalizeVehicleName(entry?.vehicleName) === normalizedVehicleName && expiresAt > Date.now();
+      });
+
+      if (activeRental) {
+        return res.status(409).json({ ok: false, error: "showroom_vehicle_has_active_rental" });
+      }
+
+      const updatedProject = upsertProject(projectKey, (current) => ({
+        ...current,
+        showroomVehicles: (Array.isArray(current.showroomVehicles) ? current.showroomVehicles : [])
+          .filter((entry) => normalizeVehicleName(entry?.vehicleName) !== normalizedVehicleName)
+      }));
+
+      appendProjectTransaction({
+        projectKey,
+        type: "showroom_vehicle_deleted",
+        label: "حذف مركبة تأجير",
+        amount: 0,
+        direction: "none",
+        actorUserId: authResult.account.discordUserId,
+        note: existingVehicle.vehicleName || vehicleName
+      });
+
+      return res.status(200).json({
+        ok: true,
+        project: buildWebsiteProjectSnapshot(updatedProject, authResult.account.discordUserId),
+        deletedVehicleName: existingVehicle.vehicleName || vehicleName
+      });
+    } catch (error) {
+      console.error("Website project showroom-vehicle-delete failure:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
   app.post("/web/rentals/catalog", async (req, res) => {
     try {
       if (!isAuthorizedInternalRequest(req)) {
