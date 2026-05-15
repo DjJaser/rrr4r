@@ -631,22 +631,15 @@ export function registerWebsiteRoutes(app, deps) {
     }
 
     try {
-      const directUser = client?.users?.cache?.get?.(discordUserId) || null;
-      const guildMember = directUser
-        ? null
-        : await withTimeout(
-            () => findGuildMemberForWebsiteAccess(discordUserId),
-            6000,
-            "guild_member_lookup_timeout"
-          ).catch(() => null);
-      const fetchedUser = directUser || guildMember?.user
+      const cachedUser = client?.users?.cache?.get?.(discordUserId) || null;
+      const fetchedUser = cachedUser
         ? null
         : await withTimeout(
             () => client.users.fetch(discordUserId, { force: true }),
-            6000,
+            30000,
             "discord_user_fetch_timeout"
           ).catch(() => null);
-      const targetUser = directUser || guildMember?.user || fetchedUser || null;
+      const targetUser = cachedUser || fetchedUser || null;
 
       if (!targetUser) {
         return { ok: false, error: "discord_user_fetch_failed" };
@@ -654,13 +647,13 @@ export function registerWebsiteRoutes(app, deps) {
 
       await withTimeout(
         () => targetUser.send(payload),
-        6000,
-        "discord_fetched_dm_timeout"
+        15000,
+        "discord_dm_send_timeout"
       );
 
       return {
         ok: true,
-        delivery: directUser ? "dm_cache" : (guildMember?.user ? "dm_member" : "dm_fetch"),
+        delivery: cachedUser ? "dm_cache" : "dm_fetch",
         targetId: targetUser.id,
         targetTag: targetUser.tag || targetUser.username || null
       };
@@ -799,7 +792,7 @@ export function registerWebsiteRoutes(app, deps) {
         code,
         expiresAt
       });
-      const deliveryResult = await sendWebsiteVerificationDm(account.discordUserId, payload);
+      const deliveryResult = await sendWebsiteVerificationDmForLogin(account.discordUserId, payload);
 
       console.log("[WEBSITE LOGIN] delivery result", JSON.stringify({
         robloxUsername,
