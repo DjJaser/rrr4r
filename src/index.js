@@ -191,6 +191,7 @@ import {
   findOwnedVehicleMatch,
   listVehicleCatalog,
   processExpiredRentalOwnerships,
+  syncActiveRentalOwnerships,
   removeFine,
   removeAccountByName,
   removeOwnedVehicle,
@@ -14134,6 +14135,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   await processExpiredWeapons({ notifyUsers: false }).catch((error) => {
     console.error("Initial weapon expiry check failed:", error);
   });
+  const initialRentalOwnershipSync = syncActiveRentalOwnerships();
+  if (initialRentalOwnershipSync.syncedRentalCars > 0) {
+    console.log(`[RENTAL OWNERSHIP SYNC] syncedRentalCars=${initialRentalOwnershipSync.syncedRentalCars}`);
+  }
   const initialExpiredRentalCleanup = processExpiredRentalOwnerships();
   if (initialExpiredRentalCleanup.removedRentalCars > 0 || initialExpiredRentalCleanup.removedRentalEntries > 0) {
     console.log(`[RENTAL CLEANUP] removedRentalCars=${initialExpiredRentalCleanup.removedRentalCars} removedRentalEntries=${initialExpiredRentalCleanup.removedRentalEntries}`);
@@ -14163,6 +14168,12 @@ client.once(Events.ClientReady, async (readyClient) => {
       console.error("Scheduled weapon expiry check failed:", error);
     });
   }, 60 * 60 * 1000);
+  setInterval(() => {
+    const sync = syncActiveRentalOwnerships();
+    if (sync.syncedRentalCars > 0) {
+      console.log(`[RENTAL OWNERSHIP SYNC] syncedRentalCars=${sync.syncedRentalCars}`);
+    }
+  }, 60 * 1000);
   setInterval(() => {
     const cleanup = processExpiredRentalOwnerships();
     if (cleanup.removedRentalCars > 0 || cleanup.removedRentalEntries > 0) {
@@ -14194,4 +14205,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
