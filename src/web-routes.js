@@ -94,7 +94,7 @@ export function registerWebsiteRoutes(app, deps) {
   function authenticateWebsiteAccountFromBody(payload = {}, options = {}) {
     const requireUsername = options.requireUsername !== false;
     const bankAccountId = String(payload?.bankAccountId || payload?.accountNumber || "").trim();
-    const robloxUsername = String(payload?.robloxUsername || "").trim();
+    const robloxUsername = extractWebsiteRobloxUsername(payload);
 
     if (!bankAccountId || (requireUsername && !robloxUsername)) {
       return {
@@ -111,7 +111,7 @@ export function registerWebsiteRoutes(app, deps) {
 
     if (
       requireUsername
-      && String(account.robloxUsername || "").trim().toLowerCase() !== robloxUsername.toLowerCase()
+      && normalizeWebsiteRobloxUsername(account.robloxUsername) !== normalizeWebsiteRobloxUsername(robloxUsername)
     ) {
       return { ok: false, status: 403, error: "username_mismatch" };
     }
@@ -491,14 +491,60 @@ export function registerWebsiteRoutes(app, deps) {
     return `verify_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   }
 
+  function normalizeWebsiteRobloxUsername(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+
+    const afterPipe = raw.includes("|") ? raw.split("|").pop() : raw;
+    const tokens = String(afterPipe || raw)
+      .trim()
+      .split(/\s+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    const preferredToken = tokens.find((token) => {
+      const normalized = token.replace(/[^\w]/g, "");
+      return (
+        normalized.length >= 3
+        && /^[a-z0-9_]+$/i.test(normalized)
+        && !/^m-?\d+$/i.test(token)
+      );
+    });
+
+    return String(preferredToken || tokens[0] || raw).trim().toLowerCase();
+  }
+
   function extractWebsiteRobloxUsername(payload = {}) {
-    return String(
+    const raw = String(
       payload?.robloxUsername ||
       payload?.username ||
       payload?.robloxUser ||
       payload?.userName ||
       ""
     ).trim();
+    if (!raw) {
+      return "";
+    }
+
+    const afterPipe = raw.includes("|") ? raw.split("|").pop() : raw;
+    const tokens = String(afterPipe || raw)
+      .trim()
+      .split(/\s+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    const preferredToken = tokens.find((token) => {
+      const normalized = token.replace(/[^\w]/g, "");
+      return (
+        normalized.length >= 3
+        && /^[a-z0-9_]+$/i.test(normalized)
+        && !/^m-?\d+$/i.test(token)
+      );
+    });
+
+    return String(preferredToken || tokens[0] || raw).trim();
   }
 
   function getCachedDiscordUser(discordUserId) {
@@ -1129,7 +1175,7 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: "missing_verification_fields" });
       }
 
-      const normalizedUsername = robloxUsername.toLowerCase();
+      const normalizedUsername = normalizeWebsiteRobloxUsername(robloxUsername);
       const now = Date.now();
       const recentReuseWindowMs = 2 * 60 * 1000;
       const directPending = verificationId
@@ -1143,7 +1189,7 @@ export function registerWebsiteRoutes(app, deps) {
           }
 
           const sameUsername =
-            String(pending.robloxUsername || "").trim().toLowerCase() === normalizedUsername;
+            normalizeWebsiteRobloxUsername(pending.robloxUsername) === normalizedUsername;
           const sameCode = normalizeWebsiteVerificationCode(pending.code) === code;
           if (!sameUsername || !sameCode) {
             return null;
@@ -1197,7 +1243,7 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       if (pending.used) {
-        const normalizedPendingUsername = String(pending.robloxUsername || "").trim().toLowerCase();
+          const normalizedPendingUsername = normalizeWebsiteRobloxUsername(pending.robloxUsername);
         const normalizedPendingCode = normalizeWebsiteVerificationCode(pending.code);
         const usedAtTime = pending.usedAt ? new Date(pending.usedAt).getTime() : 0;
         const isSafeDuplicateSuccess =
@@ -1237,7 +1283,7 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(410).json({ ok: false, error: "verification_expired" });
       }
 
-      if (String(pending.robloxUsername || "").trim().toLowerCase() !== normalizedUsername) {
+      if (normalizeWebsiteRobloxUsername(pending.robloxUsername) !== normalizedUsername) {
         console.warn("Website verification failed: username_mismatch", {
           verificationId: resolvedVerificationId,
           robloxUsername,
