@@ -40,6 +40,7 @@ export function registerWebsiteRoutes(app, deps) {
     BUDGET_KEYS,
     PROJECT_DEFINITIONS,
     getVehicleShowroomMetaRecord,
+    listVehicleShowroomMetaRecords,
     upsertVehicleShowroomMeta,
     upsertProject,
     appendProjectTransaction
@@ -207,10 +208,13 @@ export function registerWebsiteRoutes(app, deps) {
         .map((vehicle) => normalizeVehicleName(vehicle.name))
         .filter(Boolean)
     );
+    const showroomMetaRecords = typeof listVehicleShowroomMetaRecords === "function"
+      ? listVehicleShowroomMetaRecords()
+      : {};
 
     return getSortedVehicleCatalog()
       .map((vehicle) => {
-        const meta = getVehicleShowroomMetaRecord(vehicle.name);
+        const meta = showroomMetaRecords[normalizeVehicleName(vehicle.name)] || null;
         if (meta?.hidden) {
           return null;
         }
