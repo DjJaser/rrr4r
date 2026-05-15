@@ -12075,7 +12075,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const updatedProject = upsertProject(projectKey, (current) => ({
           ...current,
           ownerUserId: targetUser.id,
-          ownerName: targetAccount.name || targetUser.username
+          ownerName: targetAccount.name || targetUser.username,
+          admins: (Array.isArray(current.admins) ? current.admins : [])
+            .filter((userId) => userId && userId !== previousOwnerId && userId !== targetUser.id),
+          employees: (Array.isArray(current.employees) ? current.employees : [])
+            .filter((userId) => userId && userId !== previousOwnerId && userId !== targetUser.id),
+          partners: (Array.isArray(current.partners) ? current.partners : [])
+            .filter((userId) => userId && userId !== previousOwnerId && userId !== targetUser.id)
         }));
 
         appendProjectTransaction({
@@ -13706,12 +13712,13 @@ app.post("/api/weapon-check", async (req, res) => {
   listAllFines,
   getFine,
   updateFine,
-  applyBudgetTransaction,
-  applyProjectMoneyMutation,
-  BUDGET_KEYS,
-  getVehicleShowroomMetaRecord,
-  upsertVehicleShowroomMeta,
-  upsertProject,
+    applyBudgetTransaction,
+    applyProjectMoneyMutation,
+    BUDGET_KEYS,
+    PROJECT_DEFINITIONS,
+    getVehicleShowroomMetaRecord,
+    upsertVehicleShowroomMeta,
+    upsertProject,
   appendProjectTransaction
 });
 
@@ -14207,4 +14214,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
