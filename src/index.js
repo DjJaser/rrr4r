@@ -3722,7 +3722,7 @@ async function pollActiveVehicles() {
 
     const possibleVehicleOwners = findAccountsOwningVehicle(canonicalVehicleName);
     const matchedPossibleOwner = possibleVehicleOwners.find((account) =>
-      robloxUsernamesStrictlyMatchForOwnership(account.robloxUsername, ownerUsername)
+      robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)
     );
     const verifiedOwnerAccount = matchedPossibleOwner || linkedAccount;
     const hasConfidentOwnerMatch = Boolean(
@@ -3757,7 +3757,25 @@ async function pollActiveVehicles() {
     const ownedVehicleMatchByRawName = verifiedOwnerAccount?.discordUserId
       ? findOwnedVehicleMatch(verifiedOwnerAccount.discordUserId, parsed.vehicleName)
       : null;
-    const ownsVehicle = Boolean(ownedVehicleMatchByCanonical || ownedVehicleMatchByRawName);
+    const fallbackVehicleOwner = possibleVehicleOwners.find((account) => {
+      if (!account?.discordUserId) {
+        return false;
+      }
+
+      if (!robloxUsernamesMatchForOwnership(account.robloxUsername, ownerUsername)) {
+        return false;
+      }
+
+      return Boolean(
+        findOwnedVehicleMatch(account.discordUserId, canonicalVehicleName)
+        || findOwnedVehicleMatch(account.discordUserId, parsed.vehicleName)
+      );
+    });
+    const ownsVehicle = Boolean(
+      ownedVehicleMatchByCanonical
+      || ownedVehicleMatchByRawName
+      || fallbackVehicleOwner?.discordUserId
+    );
 
     if (ownsVehicle) {
       processedVehicleIds.set(uniqueKey, Date.now());
