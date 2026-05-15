@@ -190,6 +190,7 @@ import {
   listActiveRentalsMatchingVehicle,
   findOwnedVehicleMatch,
   listVehicleCatalog,
+  processExpiredRentalOwnerships,
   removeFine,
   removeAccountByName,
   removeOwnedVehicle,
@@ -1955,6 +1956,10 @@ async function processWebsiteCarSale({
   const carRecord = ownedCars.find((car) => normalizeVehicleName(car.name) === normalizeVehicleName(cleanVehicleName));
   if (!carRecord) {
     return { ok: false, error: "vehicle_not_owned" };
+  }
+
+  if (String(carRecord.source || "") === "rental") {
+    return { ok: false, error: "rental_vehicle_cannot_be_sold" };
   }
 
   const latestOffer = getVehicleOffer(carRecord.name);
@@ -12498,6 +12503,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        if (String(carRecord.source || "") === "rental") {
+          await interaction.reply({ content: "لا يمكنك بيع مركبة مؤجرة. انتظر حتى تنتهي مدة الإيجار.", ephemeral: true });
+          return;
+        }
+
         removeOwnedVehicle(interaction.user.id, carRecord.name);
         const latestOffer = getVehicleOffer(carRecord.name);
         const refundAmount = Math.floor((latestOffer.price > 0 ? latestOffer.price : carRecord.purchasePrice || 0) * 0.5);
@@ -14097,6 +14107,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   await processExpiredWeapons({ notifyUsers: false }).catch((error) => {
     console.error("Initial weapon expiry check failed:", error);
   });
+  const initialExpiredRentalCleanup = processExpiredRentalOwnerships();
+  if (initialExpiredRentalCleanup.removedRentalCars > 0 || initialExpiredRentalCleanup.removedRentalEntries > 0) {
+    console.log(`[RENTAL CLEANUP] removedRentalCars=${initialExpiredRentalCleanup.removedRentalCars} removedRentalEntries=${initialExpiredRentalCleanup.removedRentalEntries}`);
+  }
   await pollKillLogs().catch((error) => {
     console.error("Initial kill log poll failed:", error);
   });
@@ -14119,6 +14133,12 @@ client.once(Events.ClientReady, async (readyClient) => {
       console.error("Scheduled weapon expiry check failed:", error);
     });
   }, 60 * 60 * 1000);
+  setInterval(() => {
+    const cleanup = processExpiredRentalOwnerships();
+    if (cleanup.removedRentalCars > 0 || cleanup.removedRentalEntries > 0) {
+      console.log(`[RENTAL CLEANUP] removedRentalCars=${cleanup.removedRentalCars} removedRentalEntries=${cleanup.removedRentalEntries}`);
+    }
+  }, 60 * 1000);
   setInterval(() => {
     pollKillLogs().catch((error) => {
       console.error("Scheduled kill log poll failed:", error);
