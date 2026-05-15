@@ -1316,6 +1316,7 @@ export function processExpiredRentalOwnerships(at = Date.now()) {
   const timestamp = Number(at) || Date.now();
   let removedRentalCars = 0;
   let removedRentalEntries = 0;
+  const expiredRentalSnapshots = [];
 
   for (const account of Object.values(store.accounts ?? {})) {
     ensureAccountShape(account);
@@ -1326,6 +1327,14 @@ export function processExpiredRentalOwnerships(at = Date.now()) {
       const expiresAt = record?.expiresAt ? new Date(record.expiresAt).getTime() : 0;
       if (isRentalVehicle && expiresAt > 0 && expiresAt <= timestamp) {
         removedRentalCars += 1;
+        expiredRentalSnapshots.push({
+          userId: account.discordUserId || null,
+          vehicleName: prettifyVehicleName(record?.name || ""),
+          expiresAt: record?.expiresAt || null,
+          projectKey: record?.projectKey || null,
+          projectName: record?.projectName || null,
+          rentalId: record?.rentalId || null
+        });
         continue;
       }
 
@@ -1359,7 +1368,8 @@ export function processExpiredRentalOwnerships(at = Date.now()) {
 
   return {
     removedRentalCars,
-    removedRentalEntries
+    removedRentalEntries,
+    expiredRentalSnapshots
   };
 }
 
