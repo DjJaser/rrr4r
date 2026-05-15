@@ -1016,6 +1016,30 @@ export function getVehicleShowroomMetaRecord(vehicleName) {
   };
 }
 
+export function listVehicleShowroomMetaRecords() {
+  const store = ensureVehicleStoreShape(readStore());
+  const output = {};
+
+  for (const [normalizedKey, record] of Object.entries(store.vehicleShowroomMeta || {})) {
+    if (!record) {
+      continue;
+    }
+
+    output[normalizedKey] = {
+      vehicleName: prettifyVehicleName(record.vehicleName || normalizedKey),
+      image: String(record.image || "").trim(),
+      description: String(record.description || "").trim(),
+      speed: Number(record.speed || 0),
+      acceleration: String(record.acceleration || "").trim(),
+      seats: Number(record.seats || 4),
+      hidden: Boolean(record.hidden),
+      updatedAt: record.updatedAt || null
+    };
+  }
+
+  return output;
+}
+
 export function upsertVehicleShowroomMeta(vehicleName, metadata = {}) {
   const store = ensureVehicleStoreShape(readStore());
   const normalized = normalizeVehicleName(vehicleName);
