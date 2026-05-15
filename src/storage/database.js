@@ -1086,7 +1086,21 @@ export function listOwnedVehicles(userId, options = {}) {
     });
   }
 
-  return mergedVehicles.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || "")));
+  return mergedVehicles.sort((left, right) => {
+    const leftRental = left?.source === "rental" ? 0 : 1;
+    const rightRental = right?.source === "rental" ? 0 : 1;
+    if (leftRental !== rightRental) {
+      return leftRental - rightRental;
+    }
+
+    const leftExpiry = left?.source === "rental" && left?.expiresAt ? new Date(left.expiresAt).getTime() : 0;
+    const rightExpiry = right?.source === "rental" && right?.expiresAt ? new Date(right.expiresAt).getTime() : 0;
+    if (leftExpiry !== rightExpiry) {
+      return rightExpiry - leftExpiry;
+    }
+
+    return String(left?.name || "").localeCompare(String(right?.name || ""));
+  });
 }
 
 export function listActiveRentalsForUser(userId, at = Date.now()) {
