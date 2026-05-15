@@ -53,7 +53,9 @@ function trimVehicleName(name, maxLength = 30) {
 }
 
 function buildVehicleRows(ownedCars) {
-  const rows = ownedCars.slice(0, TEMPLATE.listMaxItems).map((car) => trimVehicleName(car.name));
+  const rows = ownedCars
+    .slice(0, TEMPLATE.listMaxItems)
+    .map((car) => trimVehicleName(car.source === "rental" ? `${car.name} (إيجار)` : car.name));
 
   if (ownedCars.length > TEMPLATE.listMaxItems) {
     rows.push(`+${ownedCars.length - TEMPLATE.listMaxItems} أكثر...`);
