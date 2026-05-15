@@ -790,6 +790,32 @@ async function sendProjectFuelLowAlert(project) {
   }).catch(() => null);
 }
 
+async function notifyExpiredRentalOwnerships(expiredRentalSnapshots = []) {
+  for (const rental of expiredRentalSnapshots) {
+    if (!rental?.userId || !rental?.vehicleName) {
+      continue;
+    }
+
+    await client.users.fetch(rental.userId)
+      .then((user) => user.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x8d1111)
+            .setTitle("⏳ انتهت مدة تأجير المركبة")
+            .setDescription("**انتهت مدة التأجير وتم سحب المركبة من ممتلكاتك تلقائيًا داخل النظام.**")
+            .addFields(
+              { name: "🚘 المركبة", value: `**${rental.vehicleName}**`, inline: true },
+              { name: "🏢 المعرض", value: `**${rental.projectName || rental.projectKey || "غير معروف"}**`, inline: true },
+              { name: "🧾 الحالة", value: "**تمت إزالة المركبة المؤجرة من ممتلكاتك.**", inline: false }
+            )
+            .setFooter({ text: "Arab World Rentals • Expired Rental" })
+            .setTimestamp()
+        ]
+      }).catch(() => null))
+      .catch(() => null);
+  }
+}
+
 async function processProjectSystems() {
   const now = Date.now();
   const decaySteps = getProjectFuelDecaySteps();
@@ -14111,6 +14137,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   if (initialExpiredRentalCleanup.removedRentalCars > 0 || initialExpiredRentalCleanup.removedRentalEntries > 0) {
     console.log(`[RENTAL CLEANUP] removedRentalCars=${initialExpiredRentalCleanup.removedRentalCars} removedRentalEntries=${initialExpiredRentalCleanup.removedRentalEntries}`);
   }
+  await notifyExpiredRentalOwnerships(initialExpiredRentalCleanup.expiredRentalSnapshots).catch((error) => {
+    console.error("Initial expired rental notification failed:", error);
+  });
   await pollKillLogs().catch((error) => {
     console.error("Initial kill log poll failed:", error);
   });
@@ -14138,6 +14167,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     if (cleanup.removedRentalCars > 0 || cleanup.removedRentalEntries > 0) {
       console.log(`[RENTAL CLEANUP] removedRentalCars=${cleanup.removedRentalCars} removedRentalEntries=${cleanup.removedRentalEntries}`);
     }
+    notifyExpiredRentalOwnerships(cleanup.expiredRentalSnapshots).catch((error) => {
+      console.error("Scheduled expired rental notification failed:", error);
+    });
   }, 60 * 1000);
   setInterval(() => {
     pollKillLogs().catch((error) => {
@@ -14161,3 +14193,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
