@@ -190,26 +190,7 @@ export function registerWebsiteRoutes(app, deps) {
         .filter(Boolean)
     );
 
-    const baseCatalogVehicles = getSortedVehicleCatalog();
-    const seenCatalogKeys = new Set(
-      baseCatalogVehicles
-        .map((vehicle) => normalizeVehicleName(vehicle?.name))
-        .filter(Boolean)
-    );
-
-    const appendedOfferVehicles = [...offersByVehicleKey.entries()]
-      .filter(([key]) => key && !seenCatalogKeys.has(key))
-      .map(([, offers]) => {
-        const primaryOffer = offers?.[0] || {};
-        return {
-          name: String(primaryOffer.vehicleName || "").trim(),
-          price: 0,
-          isFree: false
-        };
-      })
-      .filter((vehicle) => vehicle.name);
-
-    return [...baseCatalogVehicles, ...appendedOfferVehicles]
+    return getSortedVehicleCatalog()
       .map((vehicle) => {
         const meta = getVehicleShowroomMetaRecord(vehicle.name);
         if (meta?.hidden) {
@@ -1888,6 +1869,18 @@ export function registerWebsiteRoutes(app, deps) {
       const canonicalVehicleName = getSortedVehicleCatalog()
         .find((entry) => normalizeVehicleName(entry.name) === normalizeVehicleName(vehicleName))?.name
         || vehicleName;
+      const existingVehicleRecord = (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : [])
+        .find((entry) => normalizeVehicleName(entry?.vehicleName) === normalizeVehicleName(canonicalVehicleName));
+      const normalizedPricePerHour = Number.isFinite(pricePerHour) && pricePerHour > 0
+        ? Math.max(0, pricePerHour)
+        : Number(existingVehicleRecord?.pricePerHour || 0);
+      const normalizedPricePerDay = Number.isFinite(pricePerDay) && pricePerDay > 0
+        ? Math.max(0, pricePerDay)
+        : Number(existingVehicleRecord?.pricePerDay || 0);
+
+      if (normalizedPricePerHour <= 0 && normalizedPricePerDay <= 0) {
+        return res.status(400).json({ ok: false, error: "showroom_vehicle_price_required" });
+      }
 
       const metaPatch = {
         image: String(req.body?.image || ""),
@@ -1902,8 +1895,8 @@ export function registerWebsiteRoutes(app, deps) {
 
       const nextVehicle = {
         vehicleName: canonicalVehicleName,
-        pricePerHour: Math.max(0, pricePerHour),
-        pricePerDay: Math.max(0, pricePerDay),
+        pricePerHour: normalizedPricePerHour,
+        pricePerDay: normalizedPricePerDay,
         image: metaPatch.image || getVehicleShowroomMetaRecord(canonicalVehicleName)?.image || "",
         description: metaPatch.description || getVehicleShowroomMetaRecord(canonicalVehicleName)?.description || "",
         speed: Number(metaPatch.speed || getVehicleShowroomMetaRecord(canonicalVehicleName)?.speed || 0),
