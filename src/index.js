@@ -4720,6 +4720,7 @@ function releaseManualAssetsSeizure({ actorUserId, targetUserId, reason, sourceA
 
 async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
   const normalizedRoblox = normalizeLooseName(robloxUsername);
+  const normalizedRobloxOwnership = normalizeRobloxUsernameForOwnership(robloxUsername);
   if (!guild || !normalizedRoblox) {
     return null;
   }
@@ -4737,6 +4738,17 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
     const usernameWithoutPrefix = removeGuildMemberPrefix(candidate.user.username);
     const globalWithoutPrefix = removeGuildMemberPrefix(candidate.user.globalName);
 
+    const ownershipComparableValues = [
+      candidate.displayName,
+      candidate.user.username,
+      candidate.user.globalName,
+      displayWithoutPrefix,
+      usernameWithoutPrefix,
+      globalWithoutPrefix
+    ]
+      .map((value) => normalizeRobloxUsernameForOwnership(value))
+      .filter(Boolean);
+
     return [
       displayName,
       username,
@@ -4744,7 +4756,11 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
       displayWithoutPrefix,
       usernameWithoutPrefix,
       globalWithoutPrefix
-    ].some((value) => value === normalizedRoblox);
+    ].some((value) => value === normalizedRoblox)
+      || (
+        normalizedRobloxOwnership
+        && ownershipComparableValues.some((value) => value === normalizedRobloxOwnership)
+      );
   };
 
   const cachedMatch = guild.members.cache.find(matchesRobloxName);
