@@ -144,11 +144,7 @@ export function registerWebsiteRoutes(app, deps) {
       };
     }
 
-    let account = findAccountByAccountNumber(bankAccountId);
-    if (!account && requireUsername && robloxUsername) {
-      account = findAccountByRobloxUsername(robloxUsername);
-    }
-
+    const account = findAccountByAccountNumber(bankAccountId);
     if (!account) {
       return { ok: false, status: 404, error: "account_not_found" };
     }
