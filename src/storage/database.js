@@ -665,6 +665,37 @@ export function removeAccountByName(name) {
     ? store.transactions.filter((entry) => String(entry?.discordUserId || "") !== String(userId))
     : [];
 
+  store.fines = Object.fromEntries(
+    Object.entries(store.fines ?? {}).filter(([, fine]) => String(fine?.targetUserId || "") !== String(userId))
+  );
+
+  store.holdRequests = Object.fromEntries(
+    Object.entries(store.holdRequests ?? {}).filter(([, request]) => String(request?.userId || "") !== String(userId))
+  );
+
+  store.loans = Object.fromEntries(
+    Object.entries(store.loans ?? {}).filter(([loanId, loan]) => {
+      const sameLoanIdPrefix = String(loanId || "").startsWith(`${userId}_`);
+      const sameUser =
+        String(loan?.userId || "") === String(userId)
+        || String(loan?.targetUserId || "") === String(userId)
+        || String(loan?.discordUserId || "") === String(userId);
+      return !sameLoanIdPrefix && !sameUser;
+    })
+  );
+
+  for (const projectKey of Object.keys(store.projects ?? {})) {
+    const project = ensureProjectRecordShape(store.projects[projectKey] ?? {}, { key: projectKey });
+    const nextRentals = Array.isArray(project.rentals)
+      ? project.rentals.filter((rental) => String(rental?.userId || "") !== String(userId))
+      : [];
+
+    store.projects[projectKey] = ensureProjectRecordShape({
+      ...project,
+      rentals: nextRentals
+    }, { key: projectKey });
+  }
+
   writeStore(store);
   return account;
 }
