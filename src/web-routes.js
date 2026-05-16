@@ -45,6 +45,45 @@ export function registerWebsiteRoutes(app, deps) {
     upsertProject,
     appendProjectTransaction
   } = deps;
+  const websiteRouteCache = new Map();
+  const WEBSITE_ROUTE_CACHE_TTL_MS = 4000;
+
+  function getWebsiteCacheKey(kind, discordUserId, extra = "") {
+    return `${kind}:${String(discordUserId || "unknown")}:${String(extra || "")}`;
+  }
+
+  function readWebsiteRouteCache(kind, discordUserId, extra = "") {
+    const key = getWebsiteCacheKey(kind, discordUserId, extra);
+    const cached = websiteRouteCache.get(key);
+    if (!cached) {
+      return null;
+    }
+
+    if (Date.now() - cached.createdAt > WEBSITE_ROUTE_CACHE_TTL_MS) {
+      websiteRouteCache.delete(key);
+      return null;
+    }
+
+    return structuredClone(cached.value);
+  }
+
+  function writeWebsiteRouteCache(kind, discordUserId, value, extra = "") {
+    const key = getWebsiteCacheKey(kind, discordUserId, extra);
+    websiteRouteCache.set(key, {
+      createdAt: Date.now(),
+      value: structuredClone(value)
+    });
+    return value;
+  }
+
+  function invalidateWebsiteRouteCache(discordUserId) {
+    const needle = `:${String(discordUserId || "unknown")}:`;
+    for (const key of websiteRouteCache.keys()) {
+      if (key.includes(needle)) {
+        websiteRouteCache.delete(key);
+      }
+    }
+  }
 
   function isAuthorizedInternalRequest(req) {
     const apiKey = String(req.headers["x-api-key"] || req.headers["x-internal-api-key"] || "").trim();
@@ -1608,8 +1647,14 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       const limit = Math.max(1, Math.min(Number(req.body?.limit || 15) || 15, 50));
-      const transactions = listTransactionsForUser(authResult.account.discordUserId, limit)
-        .map((entry) => buildWebsiteTransactionSnapshot(entry));
+      const transactions = readWebsiteRouteCache("account-transactions", authResult.account.discordUserId, limit)
+        || writeWebsiteRouteCache(
+          "account-transactions",
+          authResult.account.discordUserId,
+          listTransactionsForUser(authResult.account.discordUserId, limit)
+            .map((entry) => buildWebsiteTransactionSnapshot(entry)),
+          limit
+        );
 
       return res.status(200).json({
         ok: true,
@@ -1633,7 +1678,12 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(authResult.status).json({ ok: false, error: authResult.error });
       }
 
-      const vehicles = buildWebsiteVehicleCatalogForUser(authResult.account.discordUserId);
+      const vehicles = readWebsiteRouteCache("vehicle-catalog", authResult.account.discordUserId)
+        || writeWebsiteRouteCache(
+          "vehicle-catalog",
+          authResult.account.discordUserId,
+          buildWebsiteVehicleCatalogForUser(authResult.account.discordUserId)
+        );
 
       return res.status(200).json({
         ok: true,
@@ -1700,6 +1750,8 @@ export function registerWebsiteRoutes(app, deps) {
         ]
       }).catch(() => null);
 
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
+
       return res.status(200).json({
         ok: true,
         vehicleName: result.vehicleName,
@@ -1754,6 +1806,8 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
+
       await logWebsiteAction({
         title: "🌐 **بيع مركبة من الموقع**",
         description: "**تم بيع مركبة من الموقع وتحديث ممتلكات البوت.**",
@@ -1764,6 +1818,8 @@ export function registerWebsiteRoutes(app, deps) {
           { name: "💳 **الرصيد بعد البيع**", value: `**${formatCurrency(result.account?.balance || 0)}**`, inline: true }
         ]
       });
+
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
 
       return res.status(200).json({
         ok: true,
@@ -1829,6 +1885,8 @@ export function registerWebsiteRoutes(app, deps) {
         });
       }
 
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
+
       await logWebsiteAction({
         title: "🌐 **تحويل بنكي من الموقع**",
         description: "**تم تنفيذ تحويل بنكي من الموقع وتسجيله داخل النظام.**",
@@ -1839,6 +1897,11 @@ export function registerWebsiteRoutes(app, deps) {
           { name: "💳 **الرصيد بعد التحويل**", value: `**${formatCurrency(result.senderAccount?.balance || 0)}**`, inline: true }
         ]
       });
+
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
+      if (result.targetAccount?.discordUserId) {
+        invalidateWebsiteRouteCache(result.targetAccount.discordUserId);
+      }
 
       return res.status(200).json({
         ok: true,
@@ -1886,6 +1949,8 @@ export function registerWebsiteRoutes(app, deps) {
           source: "website_admin_panel"
         }
       });
+
+      invalidateWebsiteRouteCache(account.discordUserId);
 
       return res.status(200).json({
         ok: true,
@@ -1957,7 +2022,12 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(authResult.status).json({ ok: false, error: authResult.error });
       }
 
-      const projects = buildWebsiteProjectsForUser(authResult.account.discordUserId);
+      const projects = readWebsiteRouteCache("projects", authResult.account.discordUserId)
+        || writeWebsiteRouteCache(
+          "projects",
+          authResult.account.discordUserId,
+          buildWebsiteProjectsForUser(authResult.account.discordUserId)
+        );
 
       return res.status(200).json({
         ok: true,
@@ -2071,6 +2141,7 @@ export function registerWebsiteRoutes(app, deps) {
           pricePerDay: Number(entry?.pricePerDay || 0)
         }))
       }));
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
 
       appendProjectTransaction({
         projectKey,
@@ -2166,6 +2237,7 @@ export function registerWebsiteRoutes(app, deps) {
         vehicleName: existingVehicle.vehicleName || vehicleName,
         showroomVehiclesCount: Array.isArray(updatedProject?.showroomVehicles) ? updatedProject.showroomVehicles.length : 0
       }));
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
 
       appendProjectTransaction({
         projectKey,
@@ -2210,10 +2282,17 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(authResult.status).json({ ok: false, error: authResult.error });
       }
 
+      const vehicles = readWebsiteRouteCache("rentals-catalog", authResult.account.discordUserId)
+        || writeWebsiteRouteCache(
+          "rentals-catalog",
+          authResult.account.discordUserId,
+          buildWebsiteRentalCatalog(authResult.account.discordUserId)
+        );
+
       return res.status(200).json({
         ok: true,
         account: buildWebsiteAccountSnapshot(authResult.account),
-        vehicles: buildWebsiteRentalCatalog(authResult.account.discordUserId)
+        vehicles
       });
     } catch (error) {
       console.error("Website rentals catalog failure:", error);
@@ -2374,6 +2453,8 @@ export function registerWebsiteRoutes(app, deps) {
         expiresAt
       }));
 
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
+
       const responsePayload = {
         ok: true,
         rentalId,
@@ -2508,6 +2589,8 @@ export function registerWebsiteRoutes(app, deps) {
           fineId
         }
       });
+
+      invalidateWebsiteRouteCache(authResult.account.discordUserId);
 
       applyBudgetTransaction({
         budgetKey: BUDGET_KEYS.police,
@@ -2696,17 +2779,25 @@ export function registerWebsiteRoutes(app, deps) {
       }
 
       const limit = Math.max(1, Math.min(Number(req.body?.transactionsLimit || 10) || 10, 25));
-      const transactions = listTransactionsForUser(authResult.account.discordUserId, limit)
-        .map((entry) => buildWebsiteTransactionSnapshot(entry));
-      const vehicles = buildWebsiteVehicleCatalogForUser(authResult.account.discordUserId);
-      const projects = buildWebsiteProjectsForUser(authResult.account.discordUserId);
+      const payload = readWebsiteRouteCache("mobile-bootstrap", authResult.account.discordUserId, limit)
+        || writeWebsiteRouteCache(
+          "mobile-bootstrap",
+          authResult.account.discordUserId,
+          {
+            transactions: listTransactionsForUser(authResult.account.discordUserId, limit)
+              .map((entry) => buildWebsiteTransactionSnapshot(entry)),
+            vehicles: buildWebsiteVehicleCatalogForUser(authResult.account.discordUserId),
+            projects: buildWebsiteProjectsForUser(authResult.account.discordUserId)
+          },
+          limit
+        );
 
       return res.status(200).json({
         ok: true,
         account: buildWebsiteAccountSnapshot(authResult.account),
-        transactions,
-        vehicles,
-        projects
+        transactions: payload.transactions,
+        vehicles: payload.vehicles,
+        projects: payload.projects
       });
     } catch (error) {
       console.error("Website mobile-bootstrap failure:", error);
