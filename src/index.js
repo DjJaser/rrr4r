@@ -7548,9 +7548,12 @@ async function handleCraftingDmMessage(message) {
   const asciiDigitsText = normalizeDigitsToAscii(rawText);
   const isNumericDmMessage = /^\d+$/.test(asciiDigitsText);
   const normalized = normalizeCraftingAnswer(message.content);
-  const account = requireAccount(userId);
+  const account = refreshCraftingProgress(userId) || requireAccount(userId);
+  const level2QuestStage = account?.crafting?.level2Quest?.stage || "idle";
+  const level2UpgradeStage = account?.crafting?.level2Upgrade?.stage || "idle";
+  const level3QuestStage = account?.crafting?.level3Quest?.stage || "idle";
 
-  if (account?.crafting?.level2Quest?.stage === "stage1_sent") {
+  if (level2QuestStage === "stage1_sent") {
     if (!isCraftingLevel2LocationAnswer(message.content)) {
       await message.reply("أرسل اسم الموقع الصحيح أولًا. أمثلة مقبولة: `المنجم` أو `منجم` أو `منجم الجبل`.");
       return;
@@ -7572,7 +7575,7 @@ async function handleCraftingDmMessage(message) {
     return;
   }
 
-  if (account?.crafting?.level2Quest?.stage === "stage1_location_confirmed") {
+  if (level2QuestStage === "stage1_location_confirmed") {
     if (!isCraftingLevel2RangeAnswer(message.content)) {
       await message.reply("الإجابة الرقمية غير معتمدة. أرسل مثلًا: `1200` أو `1203` أو `1200 و 1203` أو `بين 1200 و 1203`.");
       return;
@@ -7597,7 +7600,7 @@ async function handleCraftingDmMessage(message) {
     return;
   }
 
-  if (account?.crafting?.level2Quest?.stage === "stage2_sent") {
+  if (level2QuestStage === "stage2_sent") {
     if (isNumericDmMessage) {
       if (asciiDigitsText !== getCraftingLevel2FinalCode()) {
         await message.reply("الرقم غير صحيح. راجع المخطوطة جيدًا ثم أعد الإرسال.");
@@ -7617,7 +7620,7 @@ async function handleCraftingDmMessage(message) {
     }
   }
 
-  if (account?.crafting?.level2Upgrade?.stage === "puzzle_sent" && isNumericDmMessage) {
+  if (level2UpgradeStage === "puzzle_sent" && isNumericDmMessage) {
     if (asciiDigitsText !== getCraftingLevel2UpgradeFinalCode()) {
       await message.reply("الرقم غير صحيح. راجع قصة جونز مارك ثم أعد الإرسال.");
       return;
@@ -7634,7 +7637,7 @@ async function handleCraftingDmMessage(message) {
     return;
   }
 
-  if (account?.crafting?.level3Quest?.stage === "puzzle_sent" && isNumericDmMessage) {
+  if (level3QuestStage === "puzzle_sent" && isNumericDmMessage) {
     if (asciiDigitsText !== getCraftingLevel3FinalCode()) {
       await message.reply("الرمز غير صحيح. راجع المخطوطة جيدًا ثم أعد الإرسال.");
       return;
@@ -7652,30 +7655,26 @@ async function handleCraftingDmMessage(message) {
   }
 
   if (isNumericDmMessage && account?.crafting?.level2Quest) {
-    const currentStage = account.crafting.level2Quest.stage || "idle";
-    if (currentStage === "stage1_sent") {
+    if (level2QuestStage === "stage1_sent") {
       await message.reply("هذا ليس وقت الرقم الآن. أرسل اسم الموقع الصحيح أولًا مثل: `المنجم` أو `منجم الجبل`.");
       return;
     }
 
-    if (currentStage === "stage1_location_confirmed") {
+    if (level2QuestStage === "stage1_location_confirmed") {
       await message.reply("الرقم النهائي ليس الآن. في هذه المرحلة أرسل رقم اللغز الأول مثل: `1200` أو `1203` أو `بين 1200 و 1203`.");
       return;
     }
 
-    if (currentStage === "completed") {
+    if (level2QuestStage === "completed" || level2QuestStage === "idle") {
       return;
     }
+  }
 
-    await message.reply("لا يوجد ملف رقم نهائي مفتوح لك حاليًا.");
+  if (isNumericDmMessage && (level2UpgradeStage === "completed" || level2UpgradeStage === "idle")) {
     return;
   }
 
-  if (isNumericDmMessage && account?.crafting?.level2Upgrade?.stage === "completed") {
-    return;
-  }
-
-  if (isNumericDmMessage && account?.crafting?.level3Quest?.stage === "waiting") {
+  if (isNumericDmMessage && (level3QuestStage === "waiting" || level3QuestStage === "completed" || level3QuestStage === "idle")) {
     return;
   }
 
@@ -15308,3 +15307,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
