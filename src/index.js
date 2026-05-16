@@ -64,6 +64,7 @@ import {
   COLT_ROLE_ID,
   CRAFTING_LEVEL2_ACCESS_ROLE_ID,
   CRAFTING_TABLE_IMAGE_URL,
+  CRAFTING_WEAPON_IMAGE_DEFINITIONS,
   DEFAULT_CITIZEN_VEHICLE_PRICE,
   EMERGENCY_VEHICLE_DEPARTMENTS,
   DEFAULT_FREE_VEHICLE_NAMES,
@@ -287,6 +288,30 @@ const HAS_CRAFTING_IMAGE_FILE = fs.existsSync(CRAFTING_IMAGE_FILE_PATH);
 
 function getCraftingImageFiles() {
   return HAS_CRAFTING_IMAGE_FILE ? [CRAFTING_IMAGE_FILE_PATH] : [];
+}
+
+function getCraftingWeaponImageConfig(weaponKey) {
+  const config = CRAFTING_WEAPON_IMAGE_DEFINITIONS?.[weaponKey];
+  if (!config?.path || !config?.attachmentName) {
+    return null;
+  }
+
+  if (!fs.existsSync(config.path)) {
+    return null;
+  }
+
+  return config;
+}
+
+function getCraftingWeaponFiles(weaponKey) {
+  const files = [...getCraftingImageFiles()];
+  const weaponImage = getCraftingWeaponImageConfig(weaponKey);
+
+  if (weaponImage) {
+    files.push(new AttachmentBuilder(weaponImage.path, { name: weaponImage.attachmentName }));
+  }
+
+  return files;
 }
 
 function applyCraftingImage(embed) {
@@ -5986,12 +6011,13 @@ function buildCraftingApprovalButtons(levelKey) {
 
 function buildCraftingWeaponEmbed(weaponKey) {
   const weapon = CRAFTABLE_WEAPONS[weaponKey];
+  const weaponImage = getCraftingWeaponImageConfig(weaponKey);
   const resourcesText = Object.entries(weapon.resources)
     .filter(([, amount]) => Number(amount) > 0)
     .map(([key, amount]) => `• ${RESOURCE_CATALOG[key].label}: ${amount}`)
     .join("\n");
 
-  return applyCraftingImage(new EmbedBuilder()
+  const embed = applyCraftingImage(new EmbedBuilder()
     .setColor(0x0c1f3f)
     .setTitle(`🔧 تصنيع ${weapon.label}`)
     .setDescription([
@@ -6010,6 +6036,12 @@ function buildCraftingWeaponEmbed(weaponKey) {
     ].join("\n"))
     .setFooter({ text: "Arab World • تصنيع الأسلحة" })
     .setTimestamp());
+
+  if (weaponImage) {
+    embed.setThumbnail(`attachment://${weaponImage.attachmentName}`);
+  }
+
+  return embed;
 }
 
 function buildCraftingWeaponButtons(weaponKey) {
@@ -7464,7 +7496,6 @@ async function handleCraftingDmMessage(message) {
 
     const result = await finalizeCraftingLevel2UpgradeUnlock(userId);
     if (!result.ok) {
-      await message.reply("لا يوجد ملف تطوير مفتوح لك حاليًا.");
       return;
     }
 
@@ -7482,7 +7513,6 @@ async function handleCraftingDmMessage(message) {
 
     const result = await finalizeCraftingLevel3Start(userId);
     if (!result.ok) {
-      await message.reply("لا يوجد ملف مستوى ثالث مفتوح لك حاليًا.");
       return;
     }
 
@@ -7505,7 +7535,6 @@ async function handleCraftingDmMessage(message) {
     }
 
     if (currentStage === "completed") {
-      await message.reply("تم إنهاء الملف بالفعل من قبل، ولا يوجد رقم نهائي مفتوح لك الآن.");
       return;
     }
 
@@ -7514,12 +7543,10 @@ async function handleCraftingDmMessage(message) {
   }
 
   if (isNumericDmMessage && account?.crafting?.level2Upgrade?.stage === "completed") {
-    await message.reply("تم تطوير المستوى الثاني لديك بالفعل، ولا يوجد ملف تطوير مفتوح الآن.");
     return;
   }
 
   if (isNumericDmMessage && account?.crafting?.level3Quest?.stage === "waiting") {
-    await message.reply("ملف المستوى الثالث تم حله بالفعل والطاولة قيد التصنيع. انتظر انتهاء مدة الـ 3 أيام.");
     return;
   }
 
@@ -10156,7 +10183,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.editReply({
         embeds: [buildCraftingWeaponEmbed(weaponKey)],
         components: [buildCraftingWeaponButtons(weaponKey)],
-        files: getCraftingImageFiles()
+        files: getCraftingWeaponFiles(weaponKey)
       });
       return;
     }
