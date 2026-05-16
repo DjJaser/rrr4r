@@ -75,6 +75,7 @@ import {
   RESOURCE_EMBED_IMAGE_URL,
   ROBBERY_REWARDS,
   SALARY_ROLE_DEFINITIONS,
+  WEAPON_INVENTORY_DEFINITIONS,
   WEAPON_MARKET_IMAGE_URL
 } from "./constants.js";
 import { sendAuditLog } from "./audit.js";
@@ -2911,8 +2912,17 @@ function getRandomWeaponExpiryDurationMs() {
   return days * 24 * 60 * 60 * 1000;
 }
 
+function getWeaponInventoryDefinition(weaponKey) {
+  return WEAPON_INVENTORY_DEFINITIONS[weaponKey] || {
+    key: weaponKey,
+    label: String(weaponKey || "").toUpperCase(),
+    codePrefix: String(weaponKey || "").toUpperCase(),
+    roleId: null
+  };
+}
+
 function getWeaponBaseLabel(weaponKey) {
-  return weaponKey === "colt" ? "Colt" : "M9";
+  return getWeaponInventoryDefinition(weaponKey).label;
 }
 
 function getWeaponDurabilityConfig(weaponKey, entry = {}) {
@@ -3029,25 +3039,33 @@ function hasAnyActiveWeapon(account, weaponKey) {
 }
 
 function buildWeaponInventoryCode(weaponKey, index) {
-  return `${getWeaponBaseLabel(weaponKey)}-${index}`;
+  return `${getWeaponInventoryDefinition(weaponKey).codePrefix}-${index}`;
 }
 
 function parseWeaponInventoryCode(value) {
   const normalized = String(value || "").trim().toUpperCase();
-  const matched = normalized.match(/^(M9|COLT)-(\d+)$/);
+  const prefixes = Object.values(WEAPON_INVENTORY_DEFINITIONS)
+    .map((entry) => String(entry.codePrefix || "").trim().toUpperCase())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .join("|");
+  const matched = normalized.match(new RegExp(`^(${prefixes})-(\\d+)$`));
   if (!matched) {
     return null;
   }
 
+  const matchedDefinition = Object.values(WEAPON_INVENTORY_DEFINITIONS)
+    .find((entry) => String(entry.codePrefix || "").trim().toUpperCase() === matched[1]);
+
   return {
-    weaponKey: matched[1] === "COLT" ? "colt" : "m9",
+    weaponKey: matchedDefinition?.key || "m9",
     index: Number(matched[2])
   };
 }
 
 function getAllWeaponInventoryEntries(account) {
   const entries = [];
-  for (const weaponKey of ["m9", "colt"]) {
+  for (const weaponKey of Object.keys(WEAPON_INVENTORY_DEFINITIONS)) {
     const items = getWeaponInventory(account, weaponKey);
     items.forEach((entry, index) => {
       entries.push({
@@ -5687,8 +5705,12 @@ function createCraftingLevelMenu() {
           .setDescription("فتحها يتم عبر الاستخراج والملفات السرية داخل الخاص")
           .setValue(CRAFTING_TABLE_LEVELS.level2.key),
         new StringSelectMenuOptionBuilder()
+          .setLabel(CRAFTING_TABLE_LEVELS.level2upgraded.label)
+          .setDescription("يتطلب المستوى الثاني + لغز تطوير خاص بقيمة 30,000 ريال")
+          .setValue(CRAFTING_TABLE_LEVELS.level2upgraded.key),
+        new StringSelectMenuOptionBuilder()
           .setLabel(CRAFTING_TABLE_LEVELS.level3.label)
-          .setDescription("القيمة مجهولة وغير متاحة للبيع الآن")
+          .setDescription("لا يفتح إلا بعد المستوى الثاني المطور ومخطوطات جونز مارك")
           .setValue(CRAFTING_TABLE_LEVELS.level3.key),
         new StringSelectMenuOptionBuilder()
           .setLabel("🔄 ريفريش")
@@ -5715,8 +5737,16 @@ function createCraftingWeaponMenu(levelKey = "level1") {
           ? [
               new StringSelectMenuOptionBuilder()
                 .setLabel("تطوير الطاولة")
-                .setDescription("السعر مجهول • مغلق حتى يترك جونز مارك لغزًا آخر")
-                .setValue("upgrade_locked")
+                .setDescription("السعر 30,000 ريال • يفتح ملف خاص في الخاص")
+                .setValue("upgrade_level2")
+            ]
+          : []),
+        ...(levelKey === "level3"
+          ? [
+              new StringSelectMenuOptionBuilder()
+                .setLabel("تطوير المستوى الثالث")
+                .setDescription("مغلق إلى أن نجد مخطوطات جونز مارك")
+                .setValue("upgrade_locked_level3")
             ]
           : []),
         new StringSelectMenuOptionBuilder()
@@ -5738,7 +5768,8 @@ function buildCraftingHomeEmbed(account) {
       "**📋 التعليمات:**",
       "• المستوى الأول متاح للشراء مباشرة",
       "• من نفس المنيو بالأسفل اختر `طاولة تصنيع مستوى ثان` لبدء ملفها الخاص",
-      "• المستوى الثالث ما زال مغلقًا بانتظار أسرار جونز مارك",
+      "• بعد فتح المستوى الثاني يمكنك الدخول إلى `طاولة تصنيع مستوى ثان مطور` وتطويرها مقابل 30,000 ريال",
+      "• المستوى الثالث لا يفتح إلا بعد إتمام المستوى الثاني المطور وملف جونز مارك",
       "• الشراء لا يمكن استرداده بعد الموافقة النهائية",
       "• اختبار الشراء يتم في الخاص ويعاد بعد 10 دقائق عند الرسوب",
       "",
@@ -5752,78 +5783,11 @@ function buildCraftingLevelEmbed(levelKey, account) {
   const level = CRAFTING_TABLE_LEVELS[levelKey];
   const currentLevel = Number(account?.crafting?.tableLevel || 0);
   const level2QuestStage = account?.crafting?.level2Quest?.stage || "idle";
+  const level2UpgradeStage = account?.crafting?.level2Upgrade?.stage || "idle";
+  const level3QuestStage = account?.crafting?.level3Quest?.stage || "idle";
+  const level3WaitingUntil = account?.crafting?.level3Quest?.waitingUntil || null;
 
-  if (levelKey === "level2" && currentLevel >= 2) {
-    const availableWeapons = getCraftingWeaponsForLevel(levelKey);
-    return applyCraftingImage(new EmbedBuilder()
-      .setColor(0x111111)
-      .setTitle("☠️ طاولة تصنيع مستوى ثان")
-      .setDescription([
-        "**مرحبًا بك في المستوى الثاني من طاولة التصنيع.**",
-        "",
-        "**المتاح داخل الطاولة الآن:**",
-        "• **M9 دائم** بجودة كاملة وثابتة دائمًا",
-        "• **Colt مؤقت** بجودة تبدأ من 100% وتنخفض مع القتلات داخل الماب",
-        "",
-        "**📦 الأسلحة الحالية:**",
-        ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
-        "",
-        "**🔒 تطوير الطاولة:**",
-        "• السعر: **مجهول**",
-        "• الحالة: **مغلق** إلى أن يترك جونز مارك لغزًا آخر"
-      ].join("\n"))
-      .setFooter({ text: "Arab World • تصنيع المستوى الثاني" })
-      .setTimestamp());
-  }
-
-  if (!level.purchasable) {
-    if (levelKey === "level2") {
-      return applyCraftingImage(new EmbedBuilder()
-        .setColor(0x111111)
-        .setTitle("☠️ استخراج طاولة تصنيع مستوى ثان")
-        .setDescription([
-          `**السعر المعلن داخل الملف:** ${level.price.toLocaleString("en-US")} ريال`,
-          `**رسوم مسار الاستخراج الحالية:** ${CRAFTING_LEVEL2_EXTRACTION_DISPLAY_PRICE.toLocaleString("en-US")} ريال`,
-          "",
-          "**بداية هذا المسار تكون من إيمبد `/طاولة-تصنيع` نفسه عبر اختيار `طاولة تصنيع مستوى ثان`.**",
-          "",
-          "**لا يتم خصم أي مبلغ تلقائيًا من البوت في هذا المسار.**",
-          "**بدل ذلك سيتم فتح مسار ألغاز واستخراج خاص داخل الخاص.**",
-          "",
-          "**الحالة الحالية:**",
-          level2QuestStage === "completed"
-            ? "• **تم إنهاء الاستخراج بنجاح**"
-            : level2QuestStage === "stage2_sent"
-              ? "• **المخطوطة الثانية أُرسلت لك وبقي إدخال الرقم النهائي**"
-              : level2QuestStage === "stage1_location_confirmed"
-                ? "• **تم اعتماد الموقع وبقي إرسال الرقم أو المدى المطلوب**"
-              : level2QuestStage === "beast_killed"
-                ? "• **هذه حالة قديمة تم تجاوزها في النظام الحالي**"
-                : level2QuestStage === "stage1_sent"
-                  ? "• **تم إرسال ملف الاستخراج الأول إلى الخاص وبانتظار الموقع**"
-                  : "• **المسار لم يبدأ بعد**",
-          "",
-          "**المكافأة عند إتمامه:**",
-          "• فتح المستوى الثاني داخل البوت",
-          "• منح رتبة الوصول الخاصة بهذا المستوى",
-          "• ظهور Colt المؤقت و M9 الدائم داخل الطاولة"
-        ].join("\n"))
-        .setFooter({ text: "Arab World • ملف المنجم الأسود" })
-        .setTimestamp());
-    }
-
-    return new EmbedBuilder()
-      .setColor(0x0c1f3f)
-      .setTitle(`🔒 ${level.label}`)
-      .setDescription([
-        "**هذا المستوى غير متاح للبيع حاليًا.**",
-        "**القيمة ما زالت مجهولة ولم يتم فتحه داخل النظام.**"
-      ].join("\n"))
-      .setFooter({ text: "Arab World • طاولة التصنيع" })
-      .setTimestamp();
-  }
-
-  if (currentLevel >= 1) {
+  if (levelKey === "level1" && currentLevel >= 1) {
     const availableWeapons = getCraftingWeaponsForLevel(levelKey);
     return applyCraftingImage(new EmbedBuilder()
       .setColor(0x0c1f3f)
@@ -5836,15 +5800,131 @@ function buildCraftingLevelEmbed(levelKey, account) {
         "• السلاح المصنوع من هذا المستوى **لا ينكسر ولا تنتهي صلاحيته**",
         "• لا يظهر فيه **Colt** نهائيًا",
         "",
-        "**📦 متطلبات التصنيع الحالية لـ M9:**",
-        ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
-        "",
-        "**📋 التعليمات:**",
-        "• تأكد من توفر الموارد والرصيد الكافي",
-        "• اختر السلاح من القائمة أدناه",
-        "• راجع المتطلبات ثم أكد التصنيع"
+        "**📦 متطلبات التصنيع الحالية:**",
+        ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`)
       ].join("\n"))
       .setFooter({ text: "Arab World • تصنيع المستوى الأول" })
+      .setTimestamp());
+  }
+
+  if (levelKey === "level2" && currentLevel >= 2) {
+    const availableWeapons = getCraftingWeaponsForLevel(levelKey);
+    return applyCraftingImage(new EmbedBuilder()
+      .setColor(0x111111)
+      .setTitle("☠️ طاولة تصنيع مستوى ثان")
+      .setDescription([
+        "**مرحبًا بك في المستوى الثاني من طاولة التصنيع.**",
+        "",
+        ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
+        "",
+        "**🔷 تطوير الطاولة:**",
+        `• السعر: **${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال**`,
+        level2UpgradeStage === "completed"
+          ? "• الحالة: **تم التطوير بالفعل**"
+          : level2UpgradeStage === "puzzle_sent"
+            ? "• الحالة: **تم إرسال اللغز إلى الخاص**"
+            : "• الحالة: **جاهز للتطوير**"
+      ].join("\n"))
+      .setFooter({ text: "Arab World • تصنيع المستوى الثاني" })
+      .setTimestamp());
+  }
+
+  if (levelKey === "level2upgraded") {
+    if (level2UpgradeStage === "completed") {
+      const availableWeapons = getCraftingWeaponsForLevel(levelKey);
+      return applyCraftingImage(new EmbedBuilder()
+        .setColor(0x0c1f3f)
+        .setTitle("🔷 طاولة تصنيع مستوى ثان مطور")
+        .setDescription([
+          "**تم تطوير الطاولة بنجاح.**",
+          "",
+          ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
+          "",
+          "**هذا المستوى يفتح لك ملف المستوى الثالث.**"
+        ].join("\n"))
+        .setFooter({ text: "Arab World • المستوى الثاني المطور" })
+        .setTimestamp());
+    }
+
+    return applyCraftingImage(new EmbedBuilder()
+      .setColor(0x0c1f3f)
+      .setTitle("🔷 تطوير طاولة المستوى الثاني")
+      .setDescription([
+        `**سعر التطوير:** ${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال`,
+        "",
+        "**المتطلبات:**",
+        "• امتلاك المستوى الثاني",
+        "• حل ملف جونز مارك في الخاص",
+        "",
+        "**المكافآت:**",
+        "• Tec-9",
+        "• COLT PYTHON",
+        "• KRISS VECTOR"
+      ].join("\n"))
+      .setFooter({ text: "Arab World • تطوير المستوى الثاني" })
+      .setTimestamp());
+  }
+
+  if (levelKey === "level2") {
+    return applyCraftingImage(new EmbedBuilder()
+      .setColor(0x111111)
+      .setTitle("☠️ استخراج طاولة تصنيع مستوى ثان")
+      .setDescription([
+        `**السعر المعلن داخل الملف:** ${level.price.toLocaleString("en-US")} ريال`,
+        `**رسوم مسار الاستخراج الحالية:** ${CRAFTING_LEVEL2_EXTRACTION_DISPLAY_PRICE.toLocaleString("en-US")} ريال`,
+        "",
+        "**لا يتم خصم أي مبلغ تلقائيًا من البوت في هذا المسار.**",
+        "**بدل ذلك سيتم فتح مسار ألغاز واستخراج خاص داخل الخاص.**",
+        "",
+        "**الحالة الحالية:**",
+        level2QuestStage === "completed"
+          ? "• **تم إنهاء الاستخراج بنجاح**"
+          : level2QuestStage === "stage2_sent"
+            ? "• **المخطوطة الثانية أُرسلت لك وبقي الرقم النهائي**"
+            : level2QuestStage === "stage1_location_confirmed"
+              ? "• **تم اعتماد الموقع وبقي الرقم المطلوب**"
+              : level2QuestStage === "stage1_sent"
+                ? "• **تم إرسال الملف الأول**"
+                : "• **المسار لم يبدأ بعد**"
+      ].join("\n"))
+      .setFooter({ text: "Arab World • ملف المنجم الأسود" })
+      .setTimestamp());
+  }
+
+  if (levelKey === "level3") {
+    if (level3QuestStage === "waiting") {
+      return buildCraftingLevel3WaitingEmbed(level3WaitingUntil);
+    }
+
+    if (hasLevel3CraftingAccess(account)) {
+      const availableWeapons = getCraftingWeaponsForLevel(levelKey);
+      return applyCraftingImage(new EmbedBuilder()
+        .setColor(0x08162d)
+        .setTitle("⚔️ طاولة تصنيع مستوى ثالث")
+        .setDescription([
+          "**تم فتح المستوى الثالث.**",
+          "",
+          ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
+          "",
+          "**🔒 تطوير المستوى الثالث:** مغلق إلى أن نجد مخطوطات جونز مارك."
+        ].join("\n"))
+        .setFooter({ text: "Arab World • المستوى الثالث" })
+        .setTimestamp());
+    }
+
+    return applyCraftingImage(new EmbedBuilder()
+      .setColor(0x08162d)
+      .setTitle("📜 ملف طاولة المستوى الثالث")
+      .setDescription([
+        "**لا يمكنك فتح هذا المستوى إلا بعد امتلاك المستوى الثاني المطور.**",
+        "",
+        level3QuestStage === "puzzle_sent"
+          ? "• **تم إرسال اللغز إلى الخاص وبانتظار الرمز**"
+          : "• **ملف المستوى الثالث لم يبدأ بعد**",
+        "",
+        "**عند النجاح:** يبدأ تصنيع الطاولة لمدة **3 أيام**."
+      ].join("\n"))
+      .setFooter({ text: "Arab World • ملف المستوى الثالث" })
       .setTimestamp());
   }
 
@@ -5955,6 +6035,24 @@ function buildCraftingLevel2ExtractionButtons() {
       .setCustomId("crafting_level2_status")
       .setLabel("📜 حالة الملف")
       .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function buildCraftingLevel2UpgradeButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("crafting_level2_upgrade_begin")
+      .setLabel("🔷 تطوير الطاولة")
+      .setStyle(ButtonStyle.Primary)
+  );
+}
+
+function buildCraftingLevel3StartButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("crafting_level3_begin")
+      .setLabel("📜 بدء ملف المستوى الثالث")
+      .setStyle(ButtonStyle.Primary)
   );
 }
 
@@ -6263,6 +6361,302 @@ function getCraftingLevel2FinalCode() {
   return "3424";
 }
 
+function getCraftingLevel2UpgradeFinalCode() {
+  return "79435";
+}
+
+function getCraftingLevel3FinalCode() {
+  return "17281";
+}
+
+function createCraftingLevel2UpgradeCodeModal() {
+  return new ModalBuilder()
+    .setCustomId("modal_crafting_level2_upgrade_code")
+    .setTitle("رمز تطوير المستوى الثاني")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("final_code")
+          .setLabel("اكتب الرقم الصحيح")
+          .setPlaceholder("مثال: 79435")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      )
+    );
+}
+
+function createCraftingLevel3CodeModal() {
+  return new ModalBuilder()
+    .setCustomId("modal_crafting_level3_code")
+    .setTitle("رمز طاولة المستوى الثالث")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("final_code")
+          .setLabel("اكتب الرقم المستخرج من المخطوطة")
+          .setPlaceholder("مثال: 17281")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      )
+    );
+}
+
+function buildCraftingLevel2UpgradeFinalButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("crafting_level2_upgrade_submit_code")
+      .setLabel("🔐 إدخال الرقم")
+      .setStyle(ButtonStyle.Success)
+  );
+}
+
+function buildCraftingLevel3FinalButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("crafting_level3_submit_code")
+      .setLabel("🔐 إدخال الرقم")
+      .setStyle(ButtonStyle.Success)
+  );
+}
+
+function buildCraftingLevel2UpgradePuzzleText() {
+  return [
+    "في شتاء عام 2007، ضربت عاصفة قوية السواحل الشمالية لمدينة “درافيك”، المدينة التي كانت تُعرف بأنها أخطر مركز لتهريب السلاح في أوروبا الشرقية.",
+    "",
+    "في تلك الليلة تحديدًا، انقطع الاتصال بالكامل مع الميناء القديم.",
+    "",
+    "لا إشارات،",
+    "لا كاميرات،",
+    "لا سفن خرجت،",
+    "ولا حتى حرس الحدود استطاعوا الاقتراب بسبب الضباب الكثيف.",
+    "",
+    "لكن الشيء الذي أخاف الحكومة لم يكن العاصفة…",
+    "",
+    "بل الاسم المرتبط بالميناء.",
+    "",
+    "اسم",
+    "جونز مارك",
+    "",
+    "الرجل الذي كانت المخابرات تسميه:",
+    "",
+    "“التاجر الذي لا يترك أثرًا.”",
+    "",
+    "جونز مارك لم يكن مجرد مهرب أسلحة.",
+    "",
+    "كان يملك:",
+    "",
+    "مصانع سرية،",
+    "أنفاق تحت المدن،",
+    "جيوش مرتزقة،",
+    "وشبكة سوداء لبيع الأسلحة المسروقة من الحروب.",
+    "",
+    "ويقال إن لديه كنزًا ضخمًا مخفيًا منذ أكثر من 20 سنة.",
+    "",
+    "ليس ذهبًا فقط…",
+    "",
+    "بل خرائط، حسابات سرية، وأسماء أشخاص يمكن أن تسقط حكومات كاملة.",
+    "",
+    "لكن المشكلة أن أحدًا لم يصل إليه.",
+    "",
+    "كل من حاول العثور على كنز جونز مارك اختفى.",
+    "",
+    "بعضهم وُجد ميتًا.",
+    "",
+    "وبعضهم لم يُرَ مرة أخرى.",
+    "",
+    "ليلة المداهمة",
+    "",
+    "بعد أشهر من التتبع، اكتشفت الشرطة موقعًا سريًا تحت الميناء القديم.",
+    "",
+    "نفق طويل مخفي خلف مستودع صدئ.",
+    "",
+    "في الساعة 2:13 فجرًا، دخلت فرقة خاصة مكونة من 11 رجلًا.",
+    "",
+    "كان النفق ضيقًا جدًا، والرطوبة تغطي الجدران.",
+    "",
+    "كل عدة أمتار كانت تظهر علامات غريبة مكتوبة بالطلاء الأحمر:",
+    "",
+    "X",
+    "II",
+    "7",
+    "؟",
+    "III",
+    "",
+    "بشكل عشوائي.",
+    "",
+    "أحد الجنود قال:",
+    "",
+    "“يمكن مجرد علامات تهريب.”",
+    "",
+    "لكن قائد الفريق لم يقتنع.",
+    "",
+    "لأن كل علامة كانت موضوعة بعناية شديدة.",
+    "",
+    "وكأنها رسالة.",
+    "",
+    "الغرفة الأولى",
+    "",
+    "بعد المشي لعدة دقائق، وصلوا إلى غرفة حديدية صغيرة.",
+    "",
+    "في الداخل:",
+    "",
+    "مكتب خشبي قديم،",
+    "ساعة متوقفة عند 5:57،",
+    "وخمس أوراق معلقة على الحائط.",
+    "",
+    "وفوق الأوراق جملة كبيرة:",
+    "",
+    "“الناس دائمًا تنظر للرقم الخطأ.”",
+    "",
+    "على الطاولة كان هناك مسدس صدئ… لكن بدون رصاص.",
+    "",
+    "وكأن أحدًا أراد تخويف من يدخل فقط.",
+    "",
+    "الورقة الأولى",
+    "",
+    "كانت مليئة بأرقام مرتبة بشكل غريب:",
+    "",
+    "17",
+    "27",
+    "37",
+    "47",
+    "57",
+    "",
+    "لكن الرقم 57 كان عليه خط خفيف جدًا، بالكاد يُرى.",
+    "",
+    "الورقة الثانية",
+    "",
+    "91",
+    "92",
+    "93",
+    "94",
+    "95",
+    "",
+    "لكن الرقم 94 كان مكتوبًا بحبر أغمق من البقية.",
+    "",
+    "الورقة الثالثة",
+    "",
+    "204",
+    "304",
+    "404",
+    "504",
+    "604",
+    "",
+    "لكن الرقم 404 كان داخل دائرة حمراء.",
+    "",
+    "الورقة الرابعة",
+    "",
+    "13",
+    "23",
+    "33",
+    "43",
+    "53",
+    "",
+    "لكن الرقم 33 كان مائلًا قليلًا.",
+    "",
+    "الورقة الخامسة",
+    "",
+    "21",
+    "75",
+    "85",
+    "95",
+    "15",
+    "25",
+    "",
+    "لكن الرقم 95 كان بعيدًا عن بقية الأرقام، في زاوية الورقة.",
+    "",
+    "وتحته جملة صغيرة جدًا:",
+    "",
+    "“آخر رقم دائمًا يختبئ وحده.”",
+    "",
+    "الحقيقة",
+    "",
+    "جونز مارك لم يخفِ الرقم داخل معادلات.",
+    "",
+    "بل أخفاه بطريقة نفسية.",
+    "",
+    "في كل ورقة كان هناك رقم واحد يحاول لفت الانتباه:",
+    "",
+    "مشطوب،",
+    "أغمق،",
+    "داخل دائرة،",
+    "مائل،",
+    "أو معزول.",
+    "",
+    "والمطلوب ليس الرقم الكامل… بل خذوا الرقم #####",
+    "",
+    "الرقم النهائي مكوّن من أول خانة ملفتة في كل ورقة بالترتيب.",
+    "",
+    "اكتب الرقم هنا مباشرة أو من الزر بالأسفل."
+  ].join("\n");
+}
+
+function buildCraftingLevel3PuzzleText() {
+  return [
+    "بعد اختفاء جونز مارك بسنوات، ظهر صندوق معدني مغلق داخل نفق جانبي لم يكن موجودًا في خرائط الميناء.",
+    "",
+    "الصندوق لم يحتوِ ذهبًا ولا سلاحًا.",
+    "بل احتوى خمس بطاقات سوداء، وعلى كل بطاقة أرقام تبدو عشوائية، لكن كل بطاقة كانت تحمل أثرًا واحدًا فقط يدل على خانة مخفية.",
+    "",
+    "فوق البطاقات كانت هناك جملة قصيرة:",
+    "",
+    "“من يقرأ النمط سيضيع، ومن يقرأ الندبة سيصل.”",
+    "",
+    "البطاقة الأولى:",
+    "11",
+    "12",
+    "13",
+    "17",
+    "18",
+    "وفي أسفلها الرقم 17 عليه حرق خفيف عند الزاوية اليمنى.",
+    "",
+    "البطاقة الثانية:",
+    "61",
+    "71",
+    "72",
+    "73",
+    "74",
+    "وكان الرقم 72 وحده فوق خطٍ رفيع كأنه وُضع لاحقًا.",
+    "",
+    "البطاقة الثالثة:",
+    "22",
+    "27",
+    "32",
+    "42",
+    "52",
+    "لكن الرقم 22 لم يكن الأوضح… بل 27 كان مائلًا ومزاحًا قليلًا عن السطر.",
+    "",
+    "البطاقة الرابعة:",
+    "84",
+    "85",
+    "86",
+    "87",
+    "88",
+    "والرقم 88 داخل مربع باهت يكاد لا يظهر إلا مع الضوء.",
+    "",
+    "البطاقة الخامسة:",
+    "01",
+    "11",
+    "21",
+    "31",
+    "41",
+    "وكان الرقم 21 فقط محاطًا بنقطتين صغيرتين من الحبر الأسود.",
+    "",
+    "في ظهر آخر بطاقة وُجدت ملاحظة:",
+    "",
+    "“لا تجمع الأرقام.",
+    "لا تبحث عن المتتاليات.",
+    "ولا تسأل لماذا الأعداد قريبة من بعضها.",
+    "اسأل فقط: أي رقم تعمّد أحدهم أن يترك عليه أثرًا؟”",
+    "",
+    "ثم سطر أخير:",
+    "",
+    "“الرقم الذي تبحث عنه لا يُقرأ من الورقة… بل من الإصابات فوق الورقة.”",
+    "",
+    "استخرج الخانات الملفتة من كل بطاقة بالترتيب، ثم أرسل الرمز النهائي."
+  ].join("\n");
+}
+
 function splitLongDiscordText(text, maxLength = 1800) {
   const normalizedText = String(text || "").replace(/\r\n/g, "\n");
   if (!normalizedText) {
@@ -6378,6 +6772,60 @@ async function sendCraftingLevel2SecondPuzzle(userId, sourceLabel = "بعد حل
   return true;
 }
 
+async function sendCraftingLevel2UpgradePuzzle(userId) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) {
+    return false;
+  }
+
+  await user.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0c1f3f)
+        .setTitle("🧩 تطوير طاولة المستوى الثاني")
+        .setDescription([
+          "**بدأ ملف تطوير الطاولة بنجاح.**",
+          "**اقرأ القصة جيدًا ثم استخرج الرقم النهائي.**",
+          `**السعر الذي تم خصمه:** ${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال`
+        ].join("\n"))
+        .setFooter({ text: "Arab World • تطوير المستوى الثاني" })
+        .setTimestamp()
+    ],
+    components: [buildCraftingLevel2UpgradeFinalButtons()]
+  }).catch(() => null);
+
+  await sendLongCraftingPuzzleText(user, "جونز مارك", buildCraftingLevel2UpgradePuzzleText());
+  await user.send("**إذا لم يعمل الزر، أرسل الرقم النهائي هنا مباشرة.**").catch(() => null);
+  return true;
+}
+
+async function sendCraftingLevel3Puzzle(userId) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) {
+    return false;
+  }
+
+  await user.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x08162d)
+        .setTitle("📜 ملف طاولة المستوى الثالث")
+        .setDescription([
+          "**تم فتح ملف جونز مارك الخاص بالمستوى الثالث.**",
+          "**استخرج الرمز النهائي من القصة، ثم أرسله هنا.**",
+          "**عند النجاح ستدخل الطاولة في مرحلة تصنيع مدتها 3 أيام.**"
+        ].join("\n"))
+        .setFooter({ text: "Arab World • المستوى الثالث" })
+        .setTimestamp()
+    ],
+    components: [buildCraftingLevel3FinalButtons()]
+  }).catch(() => null);
+
+  await sendLongCraftingPuzzleText(user, "مخطوطات جونز مارك", buildCraftingLevel3PuzzleText());
+  await user.send("**إذا لم يعمل الزر، أرسل الرقم هنا مباشرة.**").catch(() => null);
+  return true;
+}
+
 async function finalizeCraftingLevel2Unlock(userId) {
   const account = requireAccount(userId);
   const currentStage = account?.crafting?.level2Quest?.stage || "idle";
@@ -6411,6 +6859,44 @@ async function finalizeCraftingLevel2Unlock(userId) {
   return { ok: true };
 }
 
+async function finalizeCraftingLevel2UpgradeUnlock(userId) {
+  const account = requireAccount(userId);
+  const currentStage = account?.crafting?.level2Upgrade?.stage || "idle";
+  if (!account || currentStage !== "puzzle_sent") {
+    return { ok: false, error: "stage_not_ready" };
+  }
+
+  updateAccount(userId, (current) => {
+    current.crafting ??= {};
+    current.crafting.tableLevel = Math.max(Number(current.crafting.tableLevel || 0), 2);
+    current.crafting.level2Upgrade ??= {};
+    current.crafting.level2Upgrade.stage = "completed";
+    current.crafting.level2Upgrade.completedAt = new Date().toISOString();
+    return current;
+  });
+
+  return { ok: true };
+}
+
+async function finalizeCraftingLevel3Start(userId) {
+  const account = requireAccount(userId);
+  const currentStage = account?.crafting?.level3Quest?.stage || "idle";
+  if (!account || currentStage !== "puzzle_sent") {
+    return { ok: false, error: "stage_not_ready" };
+  }
+
+  const waitingUntil = new Date(Date.now() + (3 * 24 * 60 * 60 * 1000)).toISOString();
+  updateAccount(userId, (current) => {
+    current.crafting ??= {};
+    current.crafting.level3Quest ??= {};
+    current.crafting.level3Quest.stage = "waiting";
+    current.crafting.level3Quest.waitingUntil = waitingUntil;
+    return current;
+  });
+
+  return { ok: true, waitingUntil };
+}
+
 function buildCraftingLevel2UnlockedEmbed() {
   return new EmbedBuilder()
     .setColor(0xd4a017)
@@ -6423,6 +6909,30 @@ function buildCraftingLevel2UnlockedEmbed() {
       "**افتح تذكرة إذا احتجت استكمال أي إجراءات تنظيمية إضافية.**"
     ].join("\n"))
     .setFooter({ text: "Arab World • المستوى الثاني" })
+    .setTimestamp();
+}
+
+function buildCraftingLevel2UpgradeUnlockedEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x0c1f3f)
+    .setTitle("🔷 تم فتح تطوير الطاولة المستوى الثاني")
+    .setDescription("**تطورت الطاولة بنجاح، ويمكنك الآن استخدام طاولة المستوى الثاني المطورة وتصنيع الأسلحة الجديدة.**")
+    .setFooter({ text: "Arab World • المستوى الثاني المطور" })
+    .setTimestamp();
+}
+
+function buildCraftingLevel3WaitingEmbed(waitingUntil) {
+  const ts = waitingUntil ? Math.floor(new Date(waitingUntil).getTime() / 1000) : null;
+  return new EmbedBuilder()
+    .setColor(0x0c1f3f)
+    .setTitle("🏗️ يتم تصنيع طاولة المستوى الثالث")
+    .setDescription([
+      "**تم حل اللغز بنجاح وبدأ تصنيع طاولة المستوى الثالث.**",
+      ts ? `**الانتهاء المتوقع:** <t:${ts}:R>` : "**مدة الانتظار:** 3 أيام",
+      "",
+      "**عد بعد انتهاء المدة ليتم فتح المستوى الثالث لك تلقائيًا.**"
+    ].join("\n"))
+    .setFooter({ text: "Arab World • المستوى الثالث" })
     .setTimestamp();
 }
 
@@ -6946,6 +7456,42 @@ async function handleCraftingDmMessage(message) {
     }
   }
 
+  if (account?.crafting?.level2Upgrade?.stage === "puzzle_sent" && isNumericDmMessage) {
+    if (asciiDigitsText !== getCraftingLevel2UpgradeFinalCode()) {
+      await message.reply("الرقم غير صحيح. راجع قصة جونز مارك ثم أعد الإرسال.");
+      return;
+    }
+
+    const result = await finalizeCraftingLevel2UpgradeUnlock(userId);
+    if (!result.ok) {
+      await message.reply("لا يوجد ملف تطوير مفتوح لك حاليًا.");
+      return;
+    }
+
+    await message.reply({
+      embeds: [buildCraftingLevel2UpgradeUnlockedEmbed()]
+    });
+    return;
+  }
+
+  if (account?.crafting?.level3Quest?.stage === "puzzle_sent" && isNumericDmMessage) {
+    if (asciiDigitsText !== getCraftingLevel3FinalCode()) {
+      await message.reply("الرمز غير صحيح. راجع المخطوطة جيدًا ثم أعد الإرسال.");
+      return;
+    }
+
+    const result = await finalizeCraftingLevel3Start(userId);
+    if (!result.ok) {
+      await message.reply("لا يوجد ملف مستوى ثالث مفتوح لك حاليًا.");
+      return;
+    }
+
+    await message.reply({
+      embeds: [buildCraftingLevel3WaitingEmbed(result.waitingUntil)]
+    });
+    return;
+  }
+
   if (isNumericDmMessage && account?.crafting?.level2Quest) {
     const currentStage = account.crafting.level2Quest.stage || "idle";
     if (currentStage === "stage1_sent") {
@@ -6964,6 +7510,16 @@ async function handleCraftingDmMessage(message) {
     }
 
     await message.reply("لا يوجد ملف رقم نهائي مفتوح لك حاليًا.");
+    return;
+  }
+
+  if (isNumericDmMessage && account?.crafting?.level2Upgrade?.stage === "completed") {
+    await message.reply("تم تطوير المستوى الثاني لديك بالفعل، ولا يوجد ملف تطوير مفتوح الآن.");
+    return;
+  }
+
+  if (isNumericDmMessage && account?.crafting?.level3Quest?.stage === "waiting") {
+    await message.reply("ملف المستوى الثالث تم حله بالفعل والطاولة قيد التصنيع. انتظر انتهاء مدة الـ 3 أيام.");
     return;
   }
 
@@ -7068,6 +7624,38 @@ function getCraftingCooldownText(account) {
 
 function hasCraftingTable(account, level = 1) {
   return Number(account?.crafting?.tableLevel || 0) >= level;
+}
+
+function hasLevel2UpgradedCraftingAccess(account) {
+  return account?.crafting?.level2Upgrade?.stage === "completed";
+}
+
+function hasLevel3CraftingAccess(account) {
+  return hasCraftingTable(account, 3) || account?.crafting?.level3Quest?.stage === "completed";
+}
+
+function refreshCraftingProgress(userId) {
+  const account = requireAccount(userId);
+  const waitingUntil = account?.crafting?.level3Quest?.waitingUntil;
+  const stage = account?.crafting?.level3Quest?.stage || "idle";
+  if (!account || stage !== "waiting" || !waitingUntil) {
+    return account;
+  }
+
+  if (new Date(waitingUntil).getTime() > Date.now()) {
+    return account;
+  }
+
+  updateAccount(userId, (current) => {
+    current.crafting ??= {};
+    current.crafting.tableLevel = Math.max(Number(current.crafting.tableLevel || 0), 3);
+    current.crafting.level3Quest ??= {};
+    current.crafting.level3Quest.stage = "completed";
+    current.crafting.level3Quest.completedAt = new Date().toISOString();
+    return current;
+  });
+
+  return getAccount(userId);
 }
 
 function hasLevel2CraftingAccess(member, account) {
@@ -8232,7 +8820,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "طاولة-تصنيع") {
-        const account = requireAccount(interaction.user.id);
+        const account = refreshCraftingProgress(interaction.user.id);
         if (!account) {
           await interaction.reply({ content: "لا يوجد لديك حساب بنكي لفتح طاولة التصنيع.", ephemeral: true });
           return;
@@ -8248,7 +8836,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "استخراج-طاولة-تصنيع") {
-        const account = requireAccount(interaction.user.id);
+        const account = refreshCraftingProgress(interaction.user.id);
         if (!account) {
           await interaction.reply({ content: "لا يوجد لديك حساب بنكي لعرض طاولة التصنيع.", ephemeral: true });
           return;
@@ -8283,9 +8871,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
           components.push(createCraftingWeaponMenu(levelKey));
         }
+        if (levelKey === CRAFTING_TABLE_LEVELS.level2upgraded.key) {
+          if (!hasLevel2CraftingAccess(interaction.member, account)) {
+            await interaction.reply({
+              content: "يجب أن تفتح المستوى الثاني أولًا قبل التطوير.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          components.push(hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons());
+        }
+        if (levelKey === CRAFTING_TABLE_LEVELS.level3.key) {
+          if (!hasLevel2UpgradedCraftingAccess(account)) {
+            await interaction.reply({
+              content: "لا يمكنك فتح المستوى الثالث قبل امتلاك المستوى الثاني المطور.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          if (hasLevel3CraftingAccess(account)) {
+            components.push(createCraftingWeaponMenu(levelKey));
+          } else if (account?.crafting?.level3Quest?.stage !== "waiting") {
+            components.push(buildCraftingLevel3StartButtons());
+          }
+        }
 
         await interaction.reply({
-          embeds: [buildCraftingLevelEmbed(levelKey, getAccount(interaction.user.id))],
+          embeds: [buildCraftingLevelEmbed(levelKey, refreshCraftingProgress(interaction.user.id))],
           components,
           files: getCraftingImageFiles(),
           ephemeral: false
@@ -8704,7 +9318,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "ايمبد-المعلومات") {
-        const account = requireAccount(interaction.user.id);
+        const account = refreshCraftingProgress(interaction.user.id);
         if (!account) {
           await interaction.reply({ content: "لا يوجد لديك حساب بنكي.", ephemeral: true });
           return;
@@ -8913,8 +9527,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const roleId = weaponKey === "m9" ? config.m9RoleId : COLT_ROLE_ID;
-        const weaponLabel = weaponKey === "m9" ? "M9" : "Colt";
+        const roleId = getWeaponInventoryDefinition(weaponKey).roleId || (weaponKey === "m9" ? config.m9RoleId : null);
+        const weaponLabel = getWeaponBaseLabel(weaponKey);
         const expiresAt = permanent ? null : scheduleWeaponExpiryDate(account, weaponKey, getRandomWeaponExpiryDurationMs());
 
         if (roleId) {
@@ -9055,7 +9669,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         const updatedAccount = getAccount(member.id);
-        const roleId = weaponKey === "m9" ? config.m9RoleId : COLT_ROLE_ID;
+        const roleId = getWeaponInventoryDefinition(weaponKey).roleId || (weaponKey === "m9" ? config.m9RoleId : null);
         if (roleId && !hasAnyActiveWeapon(updatedAccount, weaponKey)) {
           const guildMember = interaction.guild ? await interaction.guild.members.fetch(member.id).catch(() => null) : null;
           await guildMember?.roles.remove(roleId).catch(() => null);
@@ -9303,7 +9917,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === "weapon_info_menu") {
-      const account = requireAccount(interaction.user.id);
+      const account = refreshCraftingProgress(interaction.user.id);
       if (!account) {
         await interaction.reply({ content: "لا يوجد لديك حساب بنكي.", ephemeral: true }).catch(() => null);
         return;
@@ -9414,6 +10028,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (levelKey === CRAFTING_TABLE_LEVELS.level2upgraded.key) {
+        if (!hasLevel2CraftingAccess(interaction.member, account)) {
+          await interaction.editReply({ content: "يجب أن تفتح المستوى الثاني أولًا." });
+          return;
+        }
+
+        await interaction.editReply({
+          embeds: [buildCraftingLevelEmbed(levelKey, account)],
+          components: [hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons()],
+          files: getCraftingImageFiles()
+        });
+        return;
+      }
+
+      if (levelKey === CRAFTING_TABLE_LEVELS.level3.key) {
+        if (!hasLevel2UpgradedCraftingAccess(account)) {
+          await interaction.editReply({ content: "لا يمكنك الوصول للمستوى الثالث قبل امتلاك المستوى الثاني المطور." });
+          return;
+        }
+
+        const nextComponents = [];
+        if (hasLevel3CraftingAccess(account)) {
+          nextComponents.push(createCraftingWeaponMenu(levelKey));
+        } else if (account?.crafting?.level3Quest?.stage !== "waiting") {
+          nextComponents.push(buildCraftingLevel3StartButtons());
+        }
+
+        await interaction.editReply({
+          embeds: [buildCraftingLevelEmbed(levelKey, account)],
+          components: nextComponents,
+          files: getCraftingImageFiles()
+        });
+        return;
+      }
+
       const levelComponents = [];
       if (level.purchasable) {
         levelComponents.push(buildCraftingStartButtons(levelKey));
@@ -9435,16 +10084,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const account = requireAccount(interaction.user.id);
+      const account = refreshCraftingProgress(interaction.user.id);
       const levelKey = interaction.customId.split(":")[1] || "level1";
       const availableWeaponKeys = new Set(getCraftingWeaponsForLevel(levelKey).map((weapon) => weapon.key));
       const hasLevel1Role = interaction.member?.roles?.cache?.has(CRAFTING_LEVEL1_ACCESS_ROLE_ID);
       const hasLevel2Role = interaction.member?.roles?.cache?.has(CRAFTING_LEVEL2_ACCESS_ROLE_ID);
       const hasAccess = levelKey === "level2"
         ? hasLevel2CraftingAccess(interaction.member, account)
-        : (hasCraftingTable(account, 1) || hasLevel1Role);
+        : levelKey === "level2upgraded"
+          ? hasLevel2UpgradedCraftingAccess(account)
+          : levelKey === "level3"
+            ? hasLevel3CraftingAccess(account)
+            : (hasCraftingTable(account, 1) || hasLevel1Role);
       if (!account || !hasAccess) {
-        await interaction.editReply({ content: levelKey === "level2" ? "أنت لا تملك صلاحية الوصول إلى طاولة المستوى الثاني." : "أنت لا تملك طاولة تصنيع مستوى أول أو رتبة الوصول الخاصة بها." });
+        await interaction.editReply({
+          content: levelKey === "level2"
+            ? "أنت لا تملك صلاحية الوصول إلى طاولة المستوى الثاني."
+            : levelKey === "level2upgraded"
+              ? "أنت لا تملك المستوى الثاني المطور."
+              : levelKey === "level3"
+                ? "أنت لا تملك طاولة المستوى الثالث."
+                : "أنت لا تملك طاولة تصنيع مستوى أول أو رتبة الوصول الخاصة بها."
+        });
         return;
       }
 
@@ -9458,13 +10119,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (weaponKey === "upgrade_locked") {
+      if (weaponKey === "upgrade_level2") {
+        await interaction.editReply({
+          embeds: [buildCraftingLevelEmbed("level2upgraded", account)],
+          components: [buildCraftingLevel2UpgradeButtons()],
+          files: getCraftingImageFiles()
+        });
+        return;
+      }
+
+      if (weaponKey === "upgrade_locked" || weaponKey === "upgrade_locked_level3") {
         await interaction.editReply({
           embeds: [
             new EmbedBuilder()
               .setColor(0x111111)
-              .setTitle("🔒 تطوير طاولة المستوى الثاني")
-              .setDescription("**الحالة الحالية:** مغلق\n**السعر:** مجهول\n\n**لن يتم فتح هذا المسار حتى يترك جونز مارك لغزًا آخر يقود إلى الأسلحة الثقيلة.**")
+              .setTitle(levelKey === "level3" ? "🔒 تطوير طاولة المستوى الثالث" : "🔒 تطوير طاولة المستوى الثاني")
+              .setDescription(
+                levelKey === "level3"
+                  ? "**هذا المسار مغلق إلى أن نجد مخطوطات جونز مارك الجديدة.**"
+                  : "**هذا المسار مغلق حاليًا.**"
+              )
               .setFooter({ text: "Arab World • أسرار جونز مارك" })
               .setTimestamp()
           ],
@@ -10922,6 +11596,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (hasLevel2CraftingAccess(interaction.member, account) || hasLevel2Role) {
           availableLevels.push("level2");
         }
+        if (hasLevel2UpgradedCraftingAccess(account)) {
+          availableLevels.push("level2upgraded");
+        }
+        if (hasLevel3CraftingAccess(account)) {
+          availableLevels.push("level3");
+        }
         const availableWeaponKeys = new Set(availableLevels.flatMap((levelKey) => getCraftingWeaponsForLevel(levelKey).map((item) => item.key)));
 
         if (!weapon || !account || !availableWeaponKeys.has(weaponKey)) {
@@ -10955,7 +11635,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const inventoryWeaponKey = weapon.inventoryKey || weaponKey;
-        const roleId = inventoryWeaponKey === "m9" ? config.m9RoleId : COLT_ROLE_ID;
+        const roleId = getWeaponInventoryDefinition(inventoryWeaponKey).roleId || (inventoryWeaponKey === "m9" ? config.m9RoleId : null);
         let craftedWeaponCode = "";
         const weaponCraftCommit = mutateStore((store) => {
           const current = getMutableAccount(store, interaction.user.id);
@@ -10991,7 +11671,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             brokenAt: null,
             expiresAt: null,
             permanent: weapon.permanent !== false,
-            source: availableLevels.includes("level2") && weapon.levels.includes("level2") ? "crafting_level2" : "crafting_level1",
+            source: weapon.levels.includes("level3")
+              ? "crafting_level3"
+              : weapon.levels.includes("level2upgraded")
+                ? "crafting_level2upgraded"
+                : weapon.levels.includes("level2")
+                  ? "crafting_level2"
+                  : "crafting_level1",
             weaponLabel: (weapon.label || "").replace(" مؤقت", "").replace(" دائم", ""),
             killCount: 0,
             qualityPercent: 100
@@ -11223,6 +11909,119 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.editReply({
           content: "تم فتح وضع الرقم في الخاص. أرسل الرقم النهائي هناك مباشرة."
         });
+        return;
+      }
+
+      if (interaction.customId === "crafting_level2_upgrade_begin") {
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
+
+        const account = refreshCraftingProgress(interaction.user.id);
+        if (!account || !hasLevel2CraftingAccess(interaction.member, account)) {
+          await interaction.editReply({ content: "يجب أن تمتلك المستوى الثاني أولًا." });
+          return;
+        }
+
+        if (hasLevel2UpgradedCraftingAccess(account)) {
+          await interaction.editReply({ content: "أنت تملك المستوى الثاني المطور بالفعل." });
+          return;
+        }
+
+        if (Number(account.balance || 0) < Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0)) {
+          await interaction.editReply({ content: "رصيدك البنكي لا يكفي لتطوير الطاولة." });
+          return;
+        }
+
+        updateAccount(interaction.user.id, (current) => {
+          current.balance -= Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0);
+          current.crafting ??= {};
+          current.crafting.level2Upgrade ??= {};
+          current.crafting.level2Upgrade.stage = "puzzle_sent";
+          current.crafting.level2Upgrade.startedAt = current.crafting.level2Upgrade.startedAt || new Date().toISOString();
+          current.crafting.level2Upgrade.paidAt = new Date().toISOString();
+          current.crafting.level2Upgrade.puzzleSentAt = new Date().toISOString();
+          return current;
+        });
+
+        const updatedAccount = getAccount(interaction.user.id);
+        appendTransaction({
+          discordUserId: interaction.user.id,
+          robloxUsername: updatedAccount?.robloxUsername,
+          type: "crafting_table_level2_upgrade",
+          amount: Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0),
+          direction: "debit",
+          balanceAfter: Number(updatedAccount?.balance || 0),
+          metadata: { levelKey: "level2upgraded" }
+        });
+
+        const delivered = await sendCraftingLevel2UpgradePuzzle(interaction.user.id);
+        if (!delivered) {
+          updateAccount(interaction.user.id, (current) => {
+            current.balance += Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0);
+            current.crafting ??= {};
+            current.crafting.level2Upgrade ??= {};
+            current.crafting.level2Upgrade.stage = "idle";
+            current.crafting.level2Upgrade.puzzleSentAt = null;
+            return current;
+          });
+          await interaction.editReply({ content: "تعذر إرسال اللغز إلى الخاص، وتم إرجاع مبلغ التطوير بالكامل. افتح الخاص مع البوت ثم حاول مرة أخرى." });
+          return;
+        }
+
+        await interaction.editReply({ content: "تم خصم قيمة التطوير وإرسال ملف جونز مارك إلى الخاص." });
+        return;
+      }
+
+      if (interaction.customId === "crafting_level2_upgrade_submit_code") {
+        await safelyShowModal(interaction, createCraftingLevel2UpgradeCodeModal());
+        return;
+      }
+
+      if (interaction.customId === "crafting_level3_begin") {
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
+
+        const account = refreshCraftingProgress(interaction.user.id);
+        if (!account || !hasLevel2UpgradedCraftingAccess(account)) {
+          await interaction.editReply({ content: "يجب أن تمتلك المستوى الثاني المطور قبل ملف المستوى الثالث." });
+          return;
+        }
+
+        if (hasLevel3CraftingAccess(account)) {
+          await interaction.editReply({ content: "المستوى الثالث مفتوح لديك بالفعل." });
+          return;
+        }
+
+        if (account?.crafting?.level3Quest?.stage === "waiting") {
+          await interaction.editReply({ embeds: [buildCraftingLevel3WaitingEmbed(account.crafting.level3Quest.waitingUntil)] });
+          return;
+        }
+
+        updateAccount(interaction.user.id, (current) => {
+          current.crafting ??= {};
+          current.crafting.level3Quest ??= {};
+          current.crafting.level3Quest.stage = "puzzle_sent";
+          current.crafting.level3Quest.startedAt = current.crafting.level3Quest.startedAt || new Date().toISOString();
+          current.crafting.level3Quest.puzzleSentAt = new Date().toISOString();
+          return current;
+        });
+
+        const delivered = await sendCraftingLevel3Puzzle(interaction.user.id);
+        if (!delivered) {
+          await interaction.editReply({ content: "تعذر إرسال ملف المستوى الثالث إلى الخاص. افتح الخاص مع البوت ثم حاول مرة أخرى." });
+          return;
+        }
+
+        await interaction.editReply({ content: "تم إرسال ملف المستوى الثالث إلى الخاص." });
+        return;
+      }
+
+      if (interaction.customId === "crafting_level3_submit_code") {
+        await safelyShowModal(interaction, createCraftingLevel3CodeModal());
         return;
       }
 
@@ -11823,6 +12622,58 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           embeds: [buildCraftingLevel2UnlockedEmbed()],
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (interaction.customId === "modal_crafting_level2_upgrade_code") {
+        const account = requireAccount(interaction.user.id);
+        const enteredCode = normalizeDigitsToAscii(String(interaction.fields.getTextInputValue("final_code") || "").trim());
+        if (!account || account?.crafting?.level2Upgrade?.stage !== "puzzle_sent") {
+          await interaction.reply({ content: "لا يوجد ملف تطوير مفتوح لك حاليًا.", ephemeral: true });
+          return;
+        }
+
+        if (enteredCode !== getCraftingLevel2UpgradeFinalCode()) {
+          await interaction.reply({ content: "الرقم غير صحيح. راجع القصة جيدًا ثم حاول مرة أخرى.", ephemeral: true });
+          return;
+        }
+
+        const result = await finalizeCraftingLevel2UpgradeUnlock(interaction.user.id);
+        if (!result.ok) {
+          await interaction.reply({ content: "لا يوجد ملف تطوير مفتوح لك حاليًا.", ephemeral: true });
+          return;
+        }
+
+        await interaction.reply({
+          embeds: [buildCraftingLevel2UpgradeUnlockedEmbed()],
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (interaction.customId === "modal_crafting_level3_code") {
+        const account = requireAccount(interaction.user.id);
+        const enteredCode = normalizeDigitsToAscii(String(interaction.fields.getTextInputValue("final_code") || "").trim());
+        if (!account || account?.crafting?.level3Quest?.stage !== "puzzle_sent") {
+          await interaction.reply({ content: "لا يوجد ملف مستوى ثالث مفتوح لك حاليًا.", ephemeral: true });
+          return;
+        }
+
+        if (enteredCode !== getCraftingLevel3FinalCode()) {
+          await interaction.reply({ content: "الرمز غير صحيح. راجع المخطوطة جيدًا.", ephemeral: true });
+          return;
+        }
+
+        const result = await finalizeCraftingLevel3Start(interaction.user.id);
+        if (!result.ok) {
+          await interaction.reply({ content: "لا يوجد ملف مستوى ثالث مفتوح لك حاليًا.", ephemeral: true });
+          return;
+        }
+
+        await interaction.reply({
+          embeds: [buildCraftingLevel3WaitingEmbed(result.waitingUntil)],
           ephemeral: true
         });
         return;
@@ -13373,7 +14224,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const parsedCode = parseWeaponInventoryCode(requestedCode);
 
         if (!parsedCode) {
-          await interaction.editReply({ content: "كود السلاح غير صحيح. مثال صحيح: M9-1 أو M9-2." });
+          await interaction.editReply({ content: "كود السلاح غير صحيح. مثال صحيح: M9-1 أو COLT-1 أو TEC9-1." });
           return;
         }
 
@@ -13426,7 +14277,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const roleId = parsedCode.weaponKey === "m9" ? config.m9RoleId : COLT_ROLE_ID;
+        const roleId = getWeaponInventoryDefinition(parsedCode.weaponKey).roleId || (parsedCode.weaponKey === "m9" ? config.m9RoleId : null);
         const weaponLabel = getWeaponBaseLabel(parsedCode.weaponKey);
         const transferredEntry = normalizeWeaponInventoryEntry({
           ...weaponEntry,
@@ -14260,3 +15111,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
