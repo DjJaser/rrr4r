@@ -9068,7 +9068,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "account-bank") {
-        await interaction.deferReply({ ephemeral: true });
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
 
         const bankName = interaction.options.getString("bank_name", true);
         const removedAccount = removeAccountByName(bankName);
@@ -9108,7 +9111,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "add-car") {
-        await interaction.deferReply({ ephemeral: true });
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
 
         const member = interaction.options.getUser("member", true);
         const vehicleName = interaction.options.getString("vehicle", true).trim();
@@ -9285,7 +9291,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "add-money" || interaction.commandName === "remove-money") {
-        await interaction.deferReply({ ephemeral: true });
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
 
         const member = interaction.options.getUser("member", true);
         const amount = interaction.options.getInteger("amount", true);
@@ -9588,20 +9597,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+        if (!deferred) {
+          return;
+        }
+
         const member = interaction.options.getUser("member", true);
         const weaponKey = interaction.options.getString("weapon", true);
         const mode = interaction.options.getString("mode", true);
         const permanent = mode === "permanent";
         const account = getAccount(member.id);
         if (!account) {
-          await interaction.reply({ content: "هذا الشخص لا يملك حسابًا بنكيًا.", ephemeral: true });
+          await interaction.editReply({ content: "هذا الشخص لا يملك حسابًا بنكيًا." });
           return;
         }
 
         const guild = await client.guilds.fetch(config.guildId).catch(() => null);
         const memberTarget = guild ? await guild.members.fetch(member.id).catch(() => null) : null;
         if (!memberTarget) {
-          await interaction.reply({ content: "تعذر العثور على العضو داخل السيرفر.", ephemeral: true });
+          await interaction.editReply({ content: "تعذر العثور على العضو داخل السيرفر." });
           return;
         }
 
@@ -9685,9 +9699,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ]
         }).catch(() => null);
 
-        await interaction.reply({
-          content: `تمت إضافة سلاح **${weaponLabel}** إلى ${member} برمز **${grantedWeaponCode}** ونوع **${permanent ? "دائم" : "مؤقت"}**.`,
-          ephemeral: true
+        await interaction.editReply({
+          content: `تمت إضافة سلاح **${weaponLabel}** إلى ${member} برمز **${grantedWeaponCode}** ونوع **${permanent ? "دائم" : "مؤقت"}**.`
         });
         return;
       }
@@ -10900,22 +10913,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const pending = pendingWebsiteLoginVerifications.get(verificationId);
 
         if (!pending) {
-          await interaction.reply({ content: "انتهت صلاحية هذا الرمز أو لم يعد متاحًا.", ephemeral: true });
+          await safelyReply(interaction, { content: "انتهت صلاحية هذا الرمز أو لم يعد متاحًا.", ephemeral: true });
           return;
         }
 
         if (pending.discordUserId !== interaction.user.id) {
-          await interaction.reply({ content: "هذا الزر خاص بصاحب رمز التحقق فقط.", ephemeral: true });
+          await safelyReply(interaction, { content: "هذا الزر خاص بصاحب رمز التحقق فقط.", ephemeral: true });
           return;
         }
 
         if (Date.now() > Number(pending.expiresAt || 0)) {
           pendingWebsiteLoginVerifications.delete(verificationId);
-          await interaction.reply({ content: "انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا من الموقع.", ephemeral: true });
+          await safelyReply(interaction, { content: "انتهت صلاحية رمز التحقق، اطلب رمزًا جديدًا من الموقع.", ephemeral: true });
           return;
         }
 
-        await interaction.reply({
+        await safelyReply(interaction, {
           content: `رمز التحقق الخاص بك هو: \`${pending.code}\``,
           ephemeral: true
         });
@@ -15189,4 +15202,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
