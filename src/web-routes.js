@@ -152,6 +152,7 @@ export function registerWebsiteRoutes(app, deps) {
     if (
       requireUsername
       && normalizeWebsiteRobloxUsername(account.robloxUsername) !== normalizeWebsiteRobloxUsername(robloxUsername)
+      && normalizeWebsiteRobloxUsernameVisual(account.robloxUsername) !== normalizeWebsiteRobloxUsernameVisual(robloxUsername)
     ) {
       return { ok: false, status: 403, error: "username_mismatch" };
     }
@@ -578,6 +579,10 @@ export function registerWebsiteRoutes(app, deps) {
     });
 
     return String(preferredToken || tokens[0] || raw).trim().toLowerCase();
+  }
+
+  function normalizeWebsiteRobloxUsernameVisual(value) {
+    return normalizeWebsiteRobloxUsername(value).replace(/[li1]/g, "1");
   }
 
   function extractWebsiteRobloxUsername(payload = {}) {
@@ -1347,7 +1352,10 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(410).json({ ok: false, error: "verification_expired" });
       }
 
-      if (normalizeWebsiteRobloxUsername(pending.robloxUsername) !== normalizedUsername) {
+      if (
+        normalizeWebsiteRobloxUsername(pending.robloxUsername) !== normalizedUsername
+        && normalizeWebsiteRobloxUsernameVisual(pending.robloxUsername) !== normalizeWebsiteRobloxUsernameVisual(robloxUsername)
+      ) {
         console.warn("Website verification failed: username_mismatch", {
           verificationId: resolvedVerificationId,
           robloxUsername,
@@ -1559,7 +1567,10 @@ export function registerWebsiteRoutes(app, deps) {
         return res.status(410).json({ ok: false, error: "verification_expired" });
       }
 
-      if (String(pending.robloxUsername || "").trim().toLowerCase() !== robloxUsername.toLowerCase()) {
+      if (
+        normalizeWebsiteRobloxUsername(pending.robloxUsername) !== normalizeWebsiteRobloxUsername(robloxUsername)
+        && normalizeWebsiteRobloxUsernameVisual(pending.robloxUsername) !== normalizeWebsiteRobloxUsernameVisual(robloxUsername)
+      ) {
         return res.status(403).json({ ok: false, error: "username_mismatch" });
       }
 
