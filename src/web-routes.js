@@ -240,14 +240,34 @@ export function registerWebsiteRoutes(app, deps) {
 
     for (const project of listProjects()) {
       if (project?.key) {
-        projectRecords.set(project.key, ensureProjectState(project.key) || project);
+        projectRecords.set(project.key, project);
       }
     }
 
     for (const projectKey of Object.keys(PROJECT_DEFINITIONS || {})) {
-      const ensuredProject = ensureProjectState(projectKey);
-      if (ensuredProject?.key) {
-        projectRecords.set(projectKey, ensuredProject);
+      if (!projectRecords.has(projectKey)) {
+        const definition = getProjectDefinition(projectKey);
+        if (!definition) {
+          continue;
+        }
+
+        projectRecords.set(projectKey, {
+          key: projectKey,
+          type: definition.type,
+          name: definition.title,
+          ownerUserId: null,
+          ownerName: "",
+          budget: 0,
+          fuelPercent: definition.type === "station" ? 100 : 0,
+          dashboardChannelId: null,
+          dashboardMessageId: null,
+          ordersChannelId: null,
+          partners: [],
+          admins: [],
+          employees: [],
+          showroomVehicles: [],
+          rentals: []
+        });
       }
     }
 
@@ -261,8 +281,7 @@ export function registerWebsiteRoutes(app, deps) {
     return ["owner", "partner", "admin"].includes(accessLevel);
   }
 
-  function buildWebsiteRentalOfferSnapshot(project, vehicle = {}) {
-    const meta = getVehicleShowroomMetaRecord(vehicle.vehicleName || vehicle.name || "");
+  function buildWebsiteRentalOfferSnapshot(project, vehicle = {}, meta = null) {
     const canonicalName = String(vehicle.vehicleName || vehicle.name || "").trim();
     const pricePerHour = Number(vehicle.pricePerHour || 0);
     const pricePerDay = Number(vehicle.pricePerDay || 0);
@@ -287,8 +306,10 @@ export function registerWebsiteRoutes(app, deps) {
 
   function buildWebsiteRentalCatalog(discordUserId) {
     const showroomProjects = listProjects()
-      .map((project) => ensureProjectState(project.key) || project)
       .filter((project) => getProjectDefinition(project.key)?.type === "showroom");
+    const showroomMetaRecords = typeof listVehicleShowroomMetaRecords === "function"
+      ? listVehicleShowroomMetaRecords()
+      : {};
 
     const activeRentalByListingKey = new Map();
     const now = Date.now();
@@ -317,11 +338,11 @@ export function registerWebsiteRoutes(app, deps) {
     return showroomProjects
       .flatMap((project) =>
         (Array.isArray(project.showroomVehicles) ? project.showroomVehicles : []).map((vehicle) => {
-          const offer = buildWebsiteRentalOfferSnapshot(project, vehicle);
+          const meta = showroomMetaRecords[normalizeVehicleName(vehicle.vehicleName || vehicle.name || "")] || null;
+          const offer = buildWebsiteRentalOfferSnapshot(project, vehicle, meta);
           const listingKey = `${project.key}|${normalizeVehicleName(offer.vehicleName)}`;
           const activeRental = activeRentalByListingKey.get(listingKey) || null;
           const normalizedVehicleName = normalizeVehicleName(offer.vehicleName);
-          const meta = getVehicleShowroomMetaRecord(offer.vehicleName);
 
           if (meta?.hidden || offer.hidden) {
             return null;
