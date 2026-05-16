@@ -504,6 +504,55 @@ function getProjectOwnerMention(project) {
   return project?.ownerUserId ? `<@${project.ownerUserId}>` : "العقار غير مملوك";
 }
 
+function collectProjectWebsiteAccessUserIds(project) {
+  const ids = new Set();
+
+  if (!project || typeof project !== "object") {
+    return [];
+  }
+
+  if (project.ownerUserId) {
+    ids.add(String(project.ownerUserId));
+  }
+
+  for (const collection of [project.admins, project.employees, project.partners]) {
+    for (const userId of Array.isArray(collection) ? collection : []) {
+      if (userId) {
+        ids.add(String(userId));
+      }
+    }
+  }
+
+  return [...ids];
+}
+
+function invalidateWebsiteProjectCaches(...projects) {
+  const invalidateCache = app?.locals?.invalidateWebsiteRouteCache;
+  if (typeof invalidateCache !== "function") {
+    return;
+  }
+
+  const userIds = new Set();
+  for (const project of projects) {
+    for (const userId of collectProjectWebsiteAccessUserIds(project)) {
+      userIds.add(userId);
+    }
+  }
+
+  for (const userId of userIds) {
+    try {
+      invalidateCache(userId);
+    } catch {}
+  }
+}
+
+function updateProjectWithWebsiteSync(projectKey, updater) {
+  const previousProject = ensureProjectState(projectKey);
+  const updatedProject = upsertProject(projectKey, updater);
+  invalidateWebsiteProjectCaches(previousProject, updatedProject);
+  return updatedProject;
+}
+
 function getProjectAccessLevel(member, project) {
   if (!project || !member) {
     return "none";
@@ -570,7 +619,7 @@ function applyProjectMoneyMutation(projectKey, amount, type, actorUserId, note =
     return { ok: false, error: "insufficient_project_budget" };
   }
 
-  const updated = upsertProject(projectKey, (current) => ({
+  const updated = updateProjectWithWebsiteSync(projectKey, (current) => ({
     ...current,
     budget: Number(current.budget || 0) + (isCredit ? numericAmount : -numericAmount)
   }));
@@ -894,7 +943,7 @@ async function processProjectSystems() {
       if (!lastIncome || now - lastIncome >= 7 * 24 * 60 * 60 * 1000) {
         const result = applyProjectMoneyMutation(definition.key, definition.weeklyIncome, "weekly_income", null, "دخل أسبوعي تلقائي");
         if (result.ok) {
-          project = upsertProject(definition.key, (current) => ({
+          project = updateProjectWithWebsiteSync(definition.key, (current) => ({
             ...current,
             lastWeeklyIncomeAt: new Date(now).toISOString()
           }));
@@ -913,7 +962,7 @@ async function processProjectSystems() {
           fuel = Math.max(0, fuel - step);
         }
 
-        project = upsertProject(definition.key, (current) => ({
+        project = updateProjectWithWebsiteSync(definition.key, (current) => ({
           ...current,
           fuelPercent: fuel,
           lastFuelDecayAt: new Date(now).toISOString()
@@ -922,13 +971,13 @@ async function processProjectSystems() {
 
       if (Number(project.fuelPercent || 0) < 50 && Number(project.lastFuelPercentNotified || 100) >= 50) {
         await sendProjectFuelLowAlert(project);
-        project = upsertProject(definition.key, (current) => ({
+        project = updateProjectWithWebsiteSync(definition.key, (current) => ({
           ...current,
           lastFuelAlertAt: new Date(now).toISOString(),
           lastFuelPercentNotified: Number(current.fuelPercent || 0)
         }));
       } else if (Number(project.fuelPercent || 0) >= 50 && Number(project.lastFuelPercentNotified || 0) < 50) {
-        project = upsertProject(definition.key, (current) => ({
+        project = updateProjectWithWebsiteSync(definition.key, (current) => ({
           ...current,
           lastFuelPercentNotified: Number(current.fuelPercent || 0)
         }));
@@ -4759,7 +4808,11 @@ async function findGuildMemberByRobloxUsername(guild, robloxUsername) {
     ].some((value) => value === normalizedRoblox)
       || (
         normalizedRobloxOwnership
-        && ownershipComparableValues.some((value) => value === normalizedRobloxOwnership)
+        && ownershipComparableValues.some((value) =>
+          value === normalizedRobloxOwnership
+          || value.includes(normalizedRobloxOwnership)
+          || normalizedRobloxOwnership.includes(value)
+        )
       );
   };
 
@@ -4845,10 +4898,31 @@ function findAccountByRobloxUsernameForOwnership(robloxUsername) {
     return null;
   }
 
-  return Object.values(allAccounts()).find((account) =>
+  const strictOrContainedMatch = Object.values(allAccounts()).find((account) =>
     account?.discordUserId
-    && robloxUsernamesStrictlyMatchForOwnership(account.robloxUsername, normalizedTarget)
+    && robloxUsernamesMatchForOwnership(account.robloxUsername, normalizedTarget)
   ) ?? null;
+
+  if (strictOrContainedMatch) {
+    return strictOrContainedMatch;
+  }
+
+  return Object.values(allAccounts()).find((account) => {
+    if (!account?.discordUserId) {
+      return false;
+    }
+
+    const bankUsername = normalizeRobloxUsernameForOwnership(account.robloxUsername);
+    const bankName = normalizeRobloxUsernameForOwnership(account.name);
+    return [bankUsername, bankName].some((value) =>
+      value
+      && (
+        value === normalizedTarget
+        || value.includes(normalizedTarget)
+        || normalizedTarget.includes(value)
+      )
+    );
+  }) ?? null;
 }
 
 async function resolveLinkedVehicleOwnerAccount(guild, ownerUsername, vehicleName) {
@@ -8591,13 +8665,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const definition = getProjectDefinition(dashboardProjectKey);
         const ownerAccount = getAccount(owner.id);
         const existingProject = ensureProjectState(dashboardProjectKey);
-        upsertProject(dashboardProjectKey, (current) => ({
+        const previousOwnerId = existingProject?.ownerUserId || null;
+        updateProjectWithWebsiteSync(dashboardProjectKey, (current) => ({
           ...current,
           type: definition.type,
-          name: name || current.name || definition.title,
-          ownerUserId: current.ownerUserId || existingProject?.ownerUserId || owner.id,
-          ownerName: current.ownerName || existingProject?.ownerName || ownerAccount?.name || owner.username,
-          ordersChannelId: ordersRoom?.id || current.ordersChannelId || null
+          name: name || definition.title,
+          ownerUserId: owner.id,
+          ownerName: ownerAccount?.name || owner.username,
+          ordersChannelId: ordersRoom?.id || current.ordersChannelId || null,
+          admins: (Array.isArray(current.admins) ? current.admins : [])
+            .filter((userId) => userId && userId !== owner.id && userId !== previousOwnerId),
+          employees: (Array.isArray(current.employees) ? current.employees : [])
+            .filter((userId) => userId && userId !== owner.id && userId !== previousOwnerId),
+          partners: (Array.isArray(current.partners) ? current.partners : [])
+            .filter((userId) => userId && userId !== owner.id && userId !== previousOwnerId)
         }));
 
         await sendProjectStatus(interaction, dashboardProjectKey);
@@ -8626,7 +8707,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const previousName = project.name || definition.title;
-        const updated = upsertProject(projectKey, (current) => ({
+        const updated = updateProjectWithWebsiteSync(projectKey, (current) => ({
           ...current,
           name: newName
         }));
@@ -8684,11 +8765,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const updated = upsertProject(projectKey, (current) => ({
+        const previousOwnerId = project.ownerUserId || null;
+        const updated = updateProjectWithWebsiteSync(projectKey, (current) => ({
           ...current,
           ownerUserId: member.id,
           ownerName: account.name || member.username,
-          name: current.name || definition.title
+          name: account.name || member.username || definition.title,
+          admins: (Array.isArray(current.admins) ? current.admins : [])
+            .filter((userId) => userId && userId !== member.id && userId !== previousOwnerId),
+          employees: (Array.isArray(current.employees) ? current.employees : [])
+            .filter((userId) => userId && userId !== member.id && userId !== previousOwnerId),
+          partners: (Array.isArray(current.partners) ? current.partners : [])
+            .filter((userId) => userId && userId !== member.id && userId !== previousOwnerId)
         }));
 
         appendProjectTransaction({
@@ -8755,10 +8843,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        upsertProject(projectKey, (current) => ({
+        updateProjectWithWebsiteSync(projectKey, (current) => ({
           ...current,
           ownerUserId: null,
           ownerName: "",
+          name: definition.title,
           admins: [],
           employees: [],
           partners: []
@@ -8836,7 +8925,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const updated = upsertProject(projectKey, (current) => ({
+        const updated = updateProjectWithWebsiteSync(projectKey, (current) => ({
           ...current,
           fuelPercent: Math.max(0, Math.min(100, Number(current.fuelPercent || 0) + (interaction.commandName === "اضافه-بنزين" ? percent : -percent))),
           lastFuelPercentNotified: Math.max(0, Math.min(100, Number(current.fuelPercent || 0) + (interaction.commandName === "اضافه-بنزين" ? percent : -percent)))
@@ -12904,7 +12993,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const updatedProject = upsertProject(projectKey, (current) => {
+        const updatedProject = updateProjectWithWebsiteSync(projectKey, (current) => {
           const currentList = Array.isArray(current[collectionKey]) ? [...current[collectionKey]] : [];
           const nextList = actionType === "add"
             ? [...currentList, targetUser.id]
@@ -13044,10 +13133,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const previousOwnerId = project.ownerUserId;
-        const updatedProject = upsertProject(projectKey, (current) => ({
+        const updatedProject = updateProjectWithWebsiteSync(projectKey, (current) => ({
           ...current,
           ownerUserId: targetUser.id,
           ownerName: targetAccount.name || targetUser.username,
+          name: targetAccount.name || targetUser.username || definition.title,
           admins: (Array.isArray(current.admins) ? current.admins : [])
             .filter((userId) => userId && userId !== previousOwnerId && userId !== targetUser.id),
           employees: (Array.isArray(current.employees) ? current.employees : [])
@@ -15218,3 +15308,4 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
+
