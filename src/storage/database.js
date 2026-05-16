@@ -724,14 +724,28 @@ function normalizeRobloxUsernameLookup(value) {
   return String(candidate).trim().toLowerCase();
 }
 
+function normalizeRobloxUsernameVisualLookup(value) {
+  return normalizeRobloxUsernameLookup(value).replace(/[li1]/g, "1");
+}
+
 export function findAccountByRobloxUsername(robloxUsername) {
   const store = readStore();
   const normalized = normalizeRobloxUsernameLookup(robloxUsername);
+  const visualNormalized = normalizeRobloxUsernameVisualLookup(robloxUsername);
 
-  const account = Object.values(store.accounts).find((entry) => {
+  const exactAccount = Object.values(store.accounts).find((entry) => {
     return normalizeRobloxUsernameLookup(entry.robloxUsername) === normalized;
   }) ?? null;
 
+  if (exactAccount) {
+    return ensureAccountShape(exactAccount);
+  }
+
+  const fallbackAccount = Object.values(store.accounts).find((entry) => {
+    return normalizeRobloxUsernameVisualLookup(entry.robloxUsername) === visualNormalized;
+  }) ?? null;
+
+  const account = fallbackAccount ?? null;
   return account ? ensureAccountShape(account) : null;
 }
 
