@@ -254,6 +254,27 @@ const pendingActivationRequests = new Map();
 let sortedVehicleCatalogCache = null;
 let sortedVehicleCatalogCacheKey = "";
 const pendingWebsiteLoginVerifications = new Map();
+
+function clearPendingWebsiteLoginVerificationsForAccount(account = null) {
+  const discordUserId = String(account?.discordUserId || "").trim();
+  const robloxUsername = String(account?.robloxUsername || "").trim().toLowerCase();
+
+  for (const [verificationId, pending] of pendingWebsiteLoginVerifications.entries()) {
+    if (!pending) {
+      pendingWebsiteLoginVerifications.delete(verificationId);
+      continue;
+    }
+
+    const sameDiscordUser = discordUserId && String(pending?.discordUserId || "").trim() === discordUserId;
+    const sameRobloxUsername =
+      robloxUsername
+      && String(pending?.robloxUsername || "").trim().toLowerCase() === robloxUsername;
+
+    if (sameDiscordUser || sameRobloxUsername) {
+      pendingWebsiteLoginVerifications.delete(verificationId);
+    }
+  }
+}
 let pinnedVoiceConnection = null;
 const ACTIVATION_REVIEW_CHANNEL_ID = "1494448244737183856";
 const ACTIVATION_ROLE_ID = "1460716225452572703";
@@ -2953,6 +2974,20 @@ function getWeaponBaseLabel(weaponKey) {
 function getWeaponDurabilityConfig(weaponKey, entry = {}) {
   if (entry?.permanent) {
     return null;
+  }
+
+  if (weaponKey === "tec9" || weaponKey === "colt_python" || weaponKey === "kriss_vector") {
+    return {
+      killsPerStep: 4,
+      qualityLossPerStep: 1
+    };
+  }
+
+  if (weaponKey === "ak" || weaponKey === "lmt_li29a1") {
+    return {
+      killsPerStep: 5,
+      qualityLossPerStep: 1
+    };
   }
 
   if (weaponKey === "colt") {
@@ -5865,6 +5900,8 @@ function buildCraftingLevelEmbed(levelKey, account) {
           "",
           ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
           "",
+          "**📉 ملاحظة الجودة:** أسلحة هذا المستوى مؤقتة، وكل **4 قتلات** تنقص **1%** من الجودة.",
+          "",
           "**هذا المستوى يفتح لك ملف المستوى الثالث.**"
         ].join("\n"))
         .setFooter({ text: "Arab World • المستوى الثاني المطور" })
@@ -5930,6 +5967,8 @@ function buildCraftingLevelEmbed(levelKey, account) {
           "**تم فتح المستوى الثالث.**",
           "",
           ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
+          "",
+          "**📉 ملاحظة الجودة:** أسلحة هذا المستوى مؤقتة، وكل **5 قتلات** تنقص **1%** من الجودة.",
           "",
           "**🔒 تطوير المستوى الثالث:** مغلق إلى أن نجد مخطوطات جونز مارك."
         ].join("\n"))
@@ -9039,6 +9078,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        clearPendingWebsiteLoginVerificationsForAccount(removedAccount);
+
+        const removedMember = interaction.guild
+          ? await interaction.guild.members.fetch(removedAccount.discordUserId).catch(() => null)
+          : null;
+
+        await removedMember?.roles.remove([
+          config.m9RoleId,
+          COLT_ROLE_ID,
+          CRAFTING_LEVEL2_ACCESS_ROLE_ID
+        ].filter(Boolean)).catch(() => null);
+
         await sendSystemLog(ADMIN_COMMANDS_LOG_CHANNEL_ID, {
           title: "🏦 **حذف حساب بنكي نهائيًا**",
           description: "**تم حذف الحساب البنكي نهائيًا من النظام ويمكن لصاحبه إنشاء حساب جديد لاحقًا.**",
@@ -11785,16 +11836,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.user.send({
           embeds: [
             buildWeaponOperationDmEmbed({
-              title: weapon.permanent === false ? "🛠️ تم تصنيع Colt بشكل مؤقت" : `🛠️ تم تصنيع ${weapon.label}`,
+              title: weapon.permanent === false ? `🛠️ تم تصنيع ${weapon.label} بشكل مؤقت` : `🛠️ تم تصنيع ${weapon.label}`,
               description: weapon.permanent === false
-                ? "تم تصنيع نسخة Colt مؤقتة بنجاح، وجودة السلاح ستنخفض تدريجيًا مع القتلات حتى ينكسر."
+                ? "تم تصنيع نسخة مؤقتة بنجاح، وجودة السلاح ستنخفض تدريجيًا مع القتلات حتى ينكسر."
                 : "تم تصنيع نسخة جديدة من سلاحك بنجاح عبر طاولة التصنيع.",
               weaponCode: craftedWeaponCode,
               weaponLabel: (weapon.label || "").replace(" مؤقت", "").replace(" دائم", ""),
               permanent: weapon.permanent !== false,
               extraLines: [
                 weapon.permanent === false
-                  ? "**📘 التعليمات:** هذا السلاح مؤقت ويملك بار جودة يبدأ من 100% وينخفض مع الاستخدام القتالي."
+                  ? `**📘 التعليمات:** هذا السلاح مؤقت ويملك بار جودة يبدأ من 100% وينخفض مع الاستخدام القتالي.${weapon.levels.includes("level3") ? " كل 5 قتلات = 1%." : weapon.levels.includes("level2upgraded") ? " كل 4 قتلات = 1%." : ""}`
                   : "**📘 التعليمات:** هذا السلاح دائم من هذه الطاولة ولن تنتهي صلاحيته.",
                 "**📦 ملاحظة:** إذا كان عندك سلاح سابق فسيبقى معك، وهذه نسخة إضافية.",
                 "**🧭 للمراجعة:** استخدم `/ايمبد-المعلومات` ثم `رؤيه اسلحتي`."
