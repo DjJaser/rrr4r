@@ -1,4 +1,4 @@
-﻿export const COLORS = {
+export const COLORS = {
   navy: 0x0c1f3f,
   red: 0x8d1111,
   gold: 0xd4a017,
@@ -8,6 +8,16 @@
 
 export const WEAPON_MARKET_IMAGE_URL = "https://cdn.discordapp.com/attachments/1480613370259439698/1497538742326657084/351_20260425130407.png?ex=69ede323&is=69ec91a3&hm=fef625153a86b22c065729a71b58415e9bfb6a5bbdeab61e546d7473f7b3df4f&";
 export const CRAFTING_TABLE_IMAGE_URL = "attachment://crafting-table-guide.png";
+export const CRAFTING_WEAPON_IMAGE_DEFINITIONS = {
+  m9: { path: "assets/crafting-weapons/m9.png", attachmentName: "crafting-m9.png" },
+  m9_level2: { path: "assets/crafting-weapons/m9.png", attachmentName: "crafting-m9.png" },
+  colt: { path: "assets/crafting-weapons/colt.png", attachmentName: "crafting-colt.png" },
+  tec9: { path: "assets/crafting-weapons/tec9.png", attachmentName: "crafting-tec9.png" },
+  colt_python: { path: "assets/crafting-weapons/colt-python.png", attachmentName: "crafting-colt-python.png" },
+  kriss_vector: { path: "assets/crafting-weapons/kriss-vector.png", attachmentName: "crafting-kriss-vector.png" },
+  ak: { path: "assets/crafting-weapons/ak.png", attachmentName: "crafting-ak.png" },
+  lmt_li29a1: { path: "assets/crafting-weapons/lmt-li29a1.png", attachmentName: "crafting-lmt-li29a1.png" }
+};
 export const RESOURCE_EMBED_IMAGE_URL = "https://cdn.discordapp.com/attachments/1096734655903973407/1497562368987631827/352_20260425140853.png?ex=69edf924&is=69eca7a4&hm=8ab2e1470beb8ebed2ad4797196612815eaeed094422ac3e6d1908d8a3478310&";
 export const BANK_BALANCE_IMAGE_URL = null;
 export const FINE_NOTICE_IMAGE_URL = null;
@@ -47,6 +57,15 @@ export const CRAFTING_LEVEL1_M9_REQUIREMENTS = {
 
 export const COLT_ROLE_ID = "1496139911726760118";
 export const CRAFTING_LEVEL2_ACCESS_ROLE_ID = "1501899632228307074";
+export const WEAPON_INVENTORY_DEFINITIONS = {
+  m9: { key: "m9", label: "M9", codePrefix: "M9", roleId: null },
+  colt: { key: "colt", label: "Colt", codePrefix: "COLT", roleId: COLT_ROLE_ID },
+  tec9: { key: "tec9", label: "Tec-9", codePrefix: "TEC9", roleId: null },
+  colt_python: { key: "colt_python", label: "COLT PYTHON", codePrefix: "PYTHON", roleId: null },
+  kriss_vector: { key: "kriss_vector", label: "KRISS VECTOR", codePrefix: "KRISS", roleId: null },
+  ak: { key: "ak", label: "AK", codePrefix: "AK", roleId: null },
+  lmt_li29a1: { key: "lmt_li29a1", label: "LMT Li29A1", codePrefix: "LMT", roleId: null }
+};
 
 export const CRAFTING_TABLE_LEVELS = {
   level1: {
@@ -61,6 +80,13 @@ export const CRAFTING_TABLE_LEVELS = {
     price: 35_000,
     purchasable: false,
     unlockMethod: "extraction"
+  },
+  level2upgraded: {
+    key: "level2upgraded",
+    label: "طاولة تصنيع مستوى ثان مطور",
+    price: 30_000,
+    purchasable: false,
+    unlockMethod: "puzzle_upgrade"
   },
   level3: {
     key: "level3",
@@ -105,6 +131,91 @@ export const CRAFTABLE_WEAPONS = {
     levels: ["level2", "level3"],
     roleId: COLT_ROLE_ID,
     permanent: false
+  },
+  tec9: {
+    key: "tec9",
+    inventoryKey: "tec9",
+    label: "Tec-9",
+    cash: 2000,
+    resources: {
+      coal: 180,
+      copper: 200,
+      iron: 160,
+      aluminum: 120,
+      sulfur: 120,
+      plastic: 200
+    },
+    levels: ["level2upgraded"],
+    roleId: null,
+    permanent: true
+  },
+  colt_python: {
+    key: "colt_python",
+    inventoryKey: "colt_python",
+    label: "COLT PYTHON",
+    cash: 3000,
+    resources: {
+      coal: 120,
+      copper: 160,
+      iron: 140,
+      aluminum: 60,
+      sulfur: 60,
+      plastic: 120
+    },
+    levels: ["level2upgraded"],
+    roleId: null,
+    permanent: true
+  },
+  kriss_vector: {
+    key: "kriss_vector",
+    inventoryKey: "kriss_vector",
+    label: "KRISS VECTOR",
+    cash: 3000,
+    resources: {
+      coal: 150,
+      copper: 180,
+      iron: 180,
+      aluminum: 130,
+      sulfur: 130,
+      plastic: 220
+    },
+    levels: ["level2upgraded"],
+    roleId: null,
+    permanent: true
+  },
+  ak: {
+    key: "ak",
+    inventoryKey: "ak",
+    label: "AK",
+    cash: 10_000,
+    resources: {
+      coal: 200,
+      copper: 200,
+      iron: 250,
+      aluminum: 120,
+      sulfur: 120,
+      plastic: 160
+    },
+    levels: ["level3"],
+    roleId: null,
+    permanent: true
+  },
+  lmt_li29a1: {
+    key: "lmt_li29a1",
+    inventoryKey: "lmt_li29a1",
+    label: "LMT Li29A1",
+    cash: 5000,
+    resources: {
+      coal: 180,
+      copper: 220,
+      iron: 220,
+      aluminum: 150,
+      sulfur: 100,
+      plastic: 180
+    },
+    levels: ["level3"],
+    roleId: null,
+    permanent: true
   }
 };
 
