@@ -140,8 +140,28 @@ function readStore() {
 function writeStore(store) {
   ensureStore();
   const tempFile = `${runtimeDataFile}.tmp`;
-  fs.writeFileSync(tempFile, JSON.stringify(store, null, 2), "utf8");
+  const payload = JSON.stringify(store, null, 2);
+  const fd = fs.openSync(tempFile, "w");
+
+  try {
+    fs.writeFileSync(fd, payload, "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+
   fs.renameSync(tempFile, runtimeDataFile);
+
+  try {
+    const dirFd = fs.openSync(path.dirname(runtimeDataFile), "r");
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch {
+    // Best-effort durability flush for platforms/filesystems that support it.
+  }
 }
 
 function buildTransactionRecord(entry) {
