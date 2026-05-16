@@ -348,6 +348,20 @@ function ensureAccountShape(account) {
       beastKilledAt: null,
       secondPuzzleSentAt: null,
       completedAt: null
+    },
+    level2Upgrade: {
+      stage: "idle",
+      startedAt: null,
+      paidAt: null,
+      puzzleSentAt: null,
+      completedAt: null
+    },
+    level3Quest: {
+      stage: "idle",
+      startedAt: null,
+      puzzleSentAt: null,
+      waitingUntil: null,
+      completedAt: null
     }
   };
   account.crafting.level2Quest ??= {
@@ -356,6 +370,20 @@ function ensureAccountShape(account) {
     firstPuzzleSentAt: null,
     beastKilledAt: null,
     secondPuzzleSentAt: null,
+    completedAt: null
+  };
+  account.crafting.level2Upgrade ??= {
+    stage: "idle",
+    startedAt: null,
+    paidAt: null,
+    puzzleSentAt: null,
+    completedAt: null
+  };
+  account.crafting.level3Quest ??= {
+    stage: "idle",
+    startedAt: null,
+    puzzleSentAt: null,
+    waitingUntil: null,
     completedAt: null
   };
   account.salaryClaims ??= {};
