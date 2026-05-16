@@ -85,6 +85,8 @@ export function registerWebsiteRoutes(app, deps) {
     }
   }
 
+  app.locals.invalidateWebsiteRouteCache = invalidateWebsiteRouteCache;
+
   function isAuthorizedInternalRequest(req) {
     const apiKey = String(req.headers["x-api-key"] || req.headers["x-internal-api-key"] || "").trim();
     return Boolean(apiKey) && apiKey === config.internalApiKey;
@@ -218,6 +220,7 @@ export function registerWebsiteRoutes(app, deps) {
       title: definition?.title || project.name || project.key,
       color: definition?.color || 0,
       ownerUserId: project.ownerUserId || null,
+      ownerName: project.ownerName || null,
       ownerMention: getProjectOwnerMention(project),
       budget: Number(project.budget || 0),
       fuelPercent: definition?.type === "station" ? Number(project.fuelPercent || 0) : null,
