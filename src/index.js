@@ -6947,7 +6947,8 @@ async function sendCraftingLevel2UpgradePuzzle(userId) {
         .setDescription([
           "**بدأ ملف تطوير الطاولة بنجاح.**",
           "**اقرأ القصة جيدًا ثم استخرج الرقم النهائي.**",
-          `**السعر الذي تم خصمه:** ${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال`
+          `**سعر التطوير:** ${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال`,
+          "**لن يتم خصم المبلغ إلا بعد حل اللغز واعتماد التطوير رسميًا.**"
         ].join("\n"))
         .setFooter({ text: "Arab World • تطوير المستوى الثاني" })
         .setTimestamp()
@@ -7027,7 +7028,13 @@ async function finalizeCraftingLevel2UpgradeUnlock(userId) {
     return { ok: false, error: "stage_not_ready" };
   }
 
+  const price = Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0);
+  if (Number(account.balance || 0) < price) {
+    return { ok: false, error: "insufficient_balance" };
+  }
+
   updateAccount(userId, (current) => {
+    current.balance = Number(current.balance || 0) - price;
     current.crafting ??= {};
     current.crafting.tableLevel = Math.max(Number(current.crafting.tableLevel || 0), 2);
     current.crafting.level2Upgrade ??= {};
@@ -7036,7 +7043,18 @@ async function finalizeCraftingLevel2UpgradeUnlock(userId) {
     return current;
   });
 
-  return { ok: true };
+  const updatedAccount = getAccount(userId);
+  appendTransaction({
+    discordUserId: userId,
+    robloxUsername: updatedAccount?.robloxUsername,
+    type: "crafting_table_level2_upgrade",
+    amount: price,
+    direction: "debit",
+    balanceAfter: Number(updatedAccount?.balance || 0),
+    metadata: { levelKey: "level2upgraded" }
+  });
+
+  return { ok: true, updatedAccount };
 }
 
 async function finalizeCraftingLevel3Start(userId) {
@@ -7628,6 +7646,9 @@ async function handleCraftingDmMessage(message) {
 
     const result = await finalizeCraftingLevel2UpgradeUnlock(userId);
     if (!result.ok) {
+      if (result.error === "insufficient_balance") {
+        await message.reply("رصيدك البنكي لم يعد يكفي لتطوير الطاولة. اشحن رصيدك ثم ابدأ التطوير من جديد.");
+      }
       return;
     }
 
@@ -12130,42 +12151,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         updateAccount(interaction.user.id, (current) => {
-          current.balance -= Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0);
           current.crafting ??= {};
           current.crafting.level2Upgrade ??= {};
           current.crafting.level2Upgrade.stage = "puzzle_sent";
           current.crafting.level2Upgrade.startedAt = current.crafting.level2Upgrade.startedAt || new Date().toISOString();
-          current.crafting.level2Upgrade.paidAt = new Date().toISOString();
           current.crafting.level2Upgrade.puzzleSentAt = new Date().toISOString();
           return current;
-        });
-
-        const updatedAccount = getAccount(interaction.user.id);
-        appendTransaction({
-          discordUserId: interaction.user.id,
-          robloxUsername: updatedAccount?.robloxUsername,
-          type: "crafting_table_level2_upgrade",
-          amount: Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0),
-          direction: "debit",
-          balanceAfter: Number(updatedAccount?.balance || 0),
-          metadata: { levelKey: "level2upgraded" }
         });
 
         const delivered = await sendCraftingLevel2UpgradePuzzle(interaction.user.id);
         if (!delivered) {
           updateAccount(interaction.user.id, (current) => {
-            current.balance += Number(CRAFTING_TABLE_LEVELS.level2upgraded.price || 0);
             current.crafting ??= {};
             current.crafting.level2Upgrade ??= {};
             current.crafting.level2Upgrade.stage = "idle";
             current.crafting.level2Upgrade.puzzleSentAt = null;
             return current;
           });
-          await interaction.editReply({ content: "تعذر إرسال اللغز إلى الخاص، وتم إرجاع مبلغ التطوير بالكامل. افتح الخاص مع البوت ثم حاول مرة أخرى." });
+          await interaction.editReply({ content: "تعذر إرسال اللغز إلى الخاص. افتح الخاص مع البوت ثم حاول مرة أخرى." });
           return;
         }
 
-        await interaction.editReply({ content: "تم خصم قيمة التطوير وإرسال ملف جونز مارك إلى الخاص." });
+        await interaction.editReply({ content: "تم إرسال ملف جونز مارك إلى الخاص. لن يتم الخصم إلا بعد حل اللغز واعتماد التطوير." });
         return;
       }
 
@@ -12837,6 +12844,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const result = await finalizeCraftingLevel2UpgradeUnlock(interaction.user.id);
         if (!result.ok) {
+          if (result.error === "insufficient_balance") {
+            await interaction.reply({ content: "رصيدك البنكي لم يعد يكفي لتطوير الطاولة. اشحن رصيدك ثم ابدأ التطوير من جديد.", ephemeral: true });
+            return;
+          }
           await interaction.reply({ content: "لا يوجد ملف تطوير مفتوح لك حاليًا.", ephemeral: true });
           return;
         }
@@ -15307,4 +15318,3 @@ startWebServer();
 client.login(config.token).catch((error) => {
   console.error("Discord login failed:", error);
 });
-
