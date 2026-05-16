@@ -428,14 +428,28 @@ function ensureProjectState(projectKey) {
   if (!definition) {
     return null;
   }
+  const current = getProject(projectKey);
+  const targetFuelPercent = definition.type === "station"
+    ? Number(current?.fuelPercent ?? 100)
+    : 0;
 
-  return upsertProject(projectKey, (current) => ({
-    ...current,
+  if (
+    current
+    && current.key === projectKey
+    && current.type === definition.type
+    && Boolean(current.name || definition.title)
+    && Number(current.fuelPercent ?? 0) === Number(targetFuelPercent)
+  ) {
+    return current;
+  }
+
+  return upsertProject(projectKey, (record) => ({
+    ...record,
     key: projectKey,
     type: definition.type,
-    name: current.name || definition.title,
-    budget: Number(current.budget || 0),
-    fuelPercent: definition.type === "station" ? Number(current.fuelPercent ?? 100) : 0
+    name: record.name || definition.title,
+    budget: Number(record.budget || 0),
+    fuelPercent: definition.type === "station" ? Number(record.fuelPercent ?? 100) : 0
   }));
 }
 
@@ -13540,25 +13554,56 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        updateAccount(interaction.user.id, (current) => {
+        const resourcePurchaseCommit = mutateStore((store) => {
+          const current = getMutableAccount(store, interaction.user.id);
+          if (!current) {
+            return { ok: false, error: "account_not_found" };
+          }
+
+          current.resources ??= {
+            coal: 0,
+            copper: 0,
+            iron: 0,
+            aluminum: 0,
+            sulfur: 0,
+            plastic: 0
+          };
+
+          if (Number(current.balance || 0) < total) {
+            return { ok: false, error: "insufficient_balance" };
+          }
+
           current.balance -= total;
-          current.resources[resourceKey] += quantity;
-          return current;
+          current.resources[resourceKey] = Number(current.resources?.[resourceKey] || 0) + quantity;
+
+          appendTransactionToStore(store, {
+            discordUserId: interaction.user.id,
+            robloxUsername: current.robloxUsername,
+            type: "resource_purchase",
+            amount: total,
+            direction: "debit",
+            balanceAfter: current.balance,
+            metadata: {
+              resourceKey,
+              quantity
+            }
+          });
+
+          return {
+            ok: true,
+            account: structuredClone(current)
+          };
         });
 
-        const updatedAccount = getAccount(interaction.user.id);
-        appendTransaction({
-          discordUserId: interaction.user.id,
-          robloxUsername: updatedAccount.robloxUsername,
-          type: "resource_purchase",
-          amount: total,
-          direction: "debit",
-          balanceAfter: updatedAccount.balance,
-          metadata: {
-            resourceKey,
-            quantity
-          }
-        });
+        if (!resourcePurchaseCommit?.ok || !resourcePurchaseCommit.account) {
+          await interaction.reply({
+            content: "تعذر حفظ عملية شراء الموارد. حاول مرة أخرى.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        const updatedAccount = resourcePurchaseCommit.account;
         await sendSystemLogs([RESOURCE_PURCHASES_LOG_CHANNEL_ID, RESOURCES_GENERAL_LOG_CHANNEL_ID], {
           title: "⛏️ **شراء مورد من المتجر**",
           description: "**تمت عملية شراء مورد وخصم قيمته من الحساب البنكي بنجاح.**",
