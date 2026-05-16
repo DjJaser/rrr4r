@@ -661,6 +661,10 @@ export function removeAccountByName(name) {
     }
   }
 
+  store.transactions = Array.isArray(store.transactions)
+    ? store.transactions.filter((entry) => String(entry?.discordUserId || "") !== String(userId))
+    : [];
+
   writeStore(store);
   return account;
 }
