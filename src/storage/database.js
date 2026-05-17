@@ -327,14 +327,13 @@ function prettifyVehicleName(value) {
 }
 
 function ensureAccountShape(account) {
-  account.resources ??= {
-    coal: 0,
-    copper: 0,
-    iron: 0,
-    aluminum: 0,
-    sulfur: 0,
-    plastic: 0
-  };
+  account.resources ??= {};
+  account.resources.coal = Number(account.resources.coal || 0);
+  account.resources.copper = Number(account.resources.copper || 0);
+  account.resources.iron = Number(account.resources.iron || 0);
+  account.resources.aluminum = Number(account.resources.aluminum || 0);
+  account.resources.sulfur = Number(account.resources.sulfur || 0);
+  account.resources.plastic = Number(account.resources.plastic || 0);
   account.weapons ??= {};
   account.cars ??= {};
   account.crafting ??= {
