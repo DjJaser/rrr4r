@@ -3234,6 +3234,58 @@ function getDisplayableWeaponInventoryEntries(account) {
     .filter((entry) => entry.active !== false && !entry.brokenAt);
 }
 
+function memberHasWeaponRoleEntitlement(member, weaponKey) {
+  if (!member?.roles?.cache) {
+    return false;
+  }
+
+  const roleId = weaponKey === "m9"
+    ? config.m9RoleId
+    : weaponKey === "colt"
+      ? COLT_ROLE_ID
+      : null;
+
+  return Boolean(roleId && member.roles.cache.has(roleId));
+}
+
+function ensureRoleBackedPermanentWeapons(discordUserId, member) {
+  if (!discordUserId || !member?.roles?.cache) {
+    return getAccount(discordUserId);
+  }
+
+  const account = getAccount(discordUserId);
+  if (!account) {
+    return null;
+  }
+
+  const missingPermanentKeys = ["m9", "colt"].filter(
+    (weaponKey) => memberHasWeaponRoleEntitlement(member, weaponKey) && !hasPermanentWeapon(account, weaponKey)
+  );
+
+  if (!missingPermanentKeys.length) {
+    return account;
+  }
+
+  return updateAccount(discordUserId, (current) => {
+    for (const weaponKey of missingPermanentKeys) {
+      appendWeaponInventory(current, weaponKey, {
+        acquiredAt: new Date().toISOString(),
+        purchasedAt: new Date().toISOString(),
+        craftedAt: new Date().toISOString(),
+        expiresAt: null,
+        active: true,
+        brokenAt: null,
+        permanent: true,
+        source: "legacy_role_sync",
+        weaponLabel: getWeaponBaseLabel(weaponKey),
+        killCount: 0,
+        qualityPercent: 100
+      });
+    }
+    return current;
+  });
+}
+
 function buildWeaponStatusText(entry) {
   if (entry.permanent) {
     return `دائم • ${buildWeaponQualityBar(100)} 100.00%`;
@@ -9646,7 +9698,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === "ايمبد-المعلومات") {
-        const account = refreshCraftingProgress(interaction.user.id);
+        const account = ensureRoleBackedPermanentWeapons(interaction.user.id, interaction.member) || refreshCraftingProgress(interaction.user.id);
         if (!account) {
           await interaction.reply({ content: "لا يوجد لديك حساب بنكي.", ephemeral: true });
           return;
@@ -9667,7 +9719,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const member = interaction.options.getUser("member", true);
-        const account = requireAccount(member.id);
+        const guild = await client.guilds.fetch(config.guildId).catch(() => null);
+        const targetMember = guild ? await guild.members.fetch(member.id).catch(() => null) : null;
+        const account = ensureRoleBackedPermanentWeapons(member.id, targetMember) || requireAccount(member.id);
 
         if (!account) {
           await interaction.editReply({
@@ -10249,7 +10303,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === "weapon_info_menu") {
-      const account = refreshCraftingProgress(interaction.user.id);
+      const account = ensureRoleBackedPermanentWeapons(interaction.user.id, interaction.member) || refreshCraftingProgress(interaction.user.id);
       if (!account) {
         await interaction.reply({ content: "لا يوجد لديك حساب بنكي.", ephemeral: true }).catch(() => null);
         return;
@@ -10267,7 +10321,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (action === "view_my_weapons") {
-        const refreshedAccount = refreshCraftingProgress(interaction.user.id) || account;
+        const refreshedAccount = ensureRoleBackedPermanentWeapons(interaction.user.id, interaction.member) || refreshCraftingProgress(interaction.user.id) || account;
         await interaction.editReply({
           embeds: [buildOwnedWeaponsEmbed(refreshedAccount)]
         });
