@@ -2699,6 +2699,26 @@ function normalizeWeaponCode(value) {
     return "COLT";
   }
 
+  if (normalized === "TEC9" || normalized.includes("TEC 9")) {
+    return "TEC-9";
+  }
+
+  if (normalized.includes("COLT PYTHON") || normalized.includes("PYTHON")) {
+    return "COLT PYTHON";
+  }
+
+  if (normalized.includes("KRISS") || normalized.includes("VECTOR")) {
+    return "KRISS VECTOR";
+  }
+
+  if (normalized === "AK" || normalized.includes("AK47") || normalized.includes("AK 47")) {
+    return "AK";
+  }
+
+  if (normalized.includes("LMT") || normalized.includes("LI29A1")) {
+    return "LMT LI29A1";
+  }
+
   return normalized;
 }
 
@@ -2709,6 +2729,21 @@ function normalizeKillLogWeapon(value) {
   }
   if (normalized.includes("COLT")) {
     return "COLT";
+  }
+  if (normalized.includes("TEC-9")) {
+    return "TEC-9";
+  }
+  if (normalized.includes("COLT PYTHON")) {
+    return "COLT PYTHON";
+  }
+  if (normalized.includes("KRISS VECTOR")) {
+    return "KRISS VECTOR";
+  }
+  if (normalized.includes("LMT")) {
+    return "LMT LI29A1";
+  }
+  if (normalized.includes("AK")) {
+    return "AK";
   }
   return normalized;
 }
@@ -3194,6 +3229,11 @@ function getAllWeaponInventoryEntries(account) {
   return entries;
 }
 
+function getDisplayableWeaponInventoryEntries(account) {
+  return getAllWeaponInventoryEntries(account)
+    .filter((entry) => entry.active !== false && !entry.brokenAt);
+}
+
 function buildWeaponStatusText(entry) {
   if (entry.permanent) {
     return `دائم • ${buildWeaponQualityBar(100)} 100.00%`;
@@ -3209,8 +3249,7 @@ function buildWeaponStatusText(entry) {
 }
 
 function buildAccountInfoWeaponLines(account) {
-  return getAllWeaponInventoryEntries(account)
-    .filter((entry) => entry.active !== false && !entry.brokenAt)
+  return getDisplayableWeaponInventoryEntries(account)
     .map((entry) => `• **${entry.weaponLabel}** • \`${entry.code}\` • ${buildWeaponStatusText(entry)}`);
 }
 
@@ -3315,7 +3354,21 @@ async function applyWeaponDurabilityFromKill({
   victimUsername = ""
 }) {
   const normalizedWeaponCode = normalizeWeaponCode(weaponCode);
-  const weaponKey = normalizedWeaponCode === "COLT" ? "colt" : normalizedWeaponCode === "M9" ? "m9" : "";
+  const weaponKey = normalizedWeaponCode === "COLT"
+    ? "colt"
+    : normalizedWeaponCode === "M9"
+      ? "m9"
+      : normalizedWeaponCode === "TEC-9"
+        ? "tec9"
+        : normalizedWeaponCode === "COLT PYTHON"
+          ? "colt_python"
+          : normalizedWeaponCode === "KRISS VECTOR"
+            ? "kriss_vector"
+            : normalizedWeaponCode === "AK"
+              ? "ak"
+              : normalizedWeaponCode === "LMT LI29A1"
+                ? "lmt_li29a1"
+                : "";
   if (!weaponKey) {
     return null;
   }
@@ -3376,7 +3429,7 @@ async function applyWeaponDurabilityFromKill({
     const refreshedAccount = getAccount(account.discordUserId);
     const guild = await client.guilds.fetch(config.guildId).catch(() => null);
     const member = guild ? await guild.members.fetch(account.discordUserId).catch(() => null) : null;
-    const roleId = weaponKey === "colt" ? COLT_ROLE_ID : config.m9RoleId;
+    const roleId = getWeaponInventoryDefinition(weaponKey).roleId || (weaponKey === "m9" ? config.m9RoleId : null);
     if (roleId && !hasAnyActiveWeapon(refreshedAccount, weaponKey)) {
       await member?.roles.remove(roleId).catch(() => null);
     }
@@ -3421,7 +3474,7 @@ function buildWeaponOperationDmEmbed({
 }
 
 function buildWeaponsInfoEmbed(account) {
-  const entries = getAllWeaponInventoryEntries(account);
+  const entries = getDisplayableWeaponInventoryEntries(account);
   return new EmbedBuilder()
     .setColor(0x12345d)
     .setTitle("🧾 دليل الأسلحة والممتلكات")
@@ -3461,7 +3514,7 @@ function createWeaponsInfoMenu() {
 }
 
 function buildOwnedWeaponsEmbed(account) {
-  const entries = getAllWeaponInventoryEntries(account);
+  const entries = getDisplayableWeaponInventoryEntries(account);
   return new EmbedBuilder()
     .setColor(0x0c1f3f)
     .setTitle("🔫 أسلحتك الحالية")
@@ -3680,13 +3733,17 @@ async function pollKillLogs() {
       continue;
     }
 
-    const roleIdToVerify = parsed.weapon === "COLT" ? COLT_ROLE_ID : config.m9RoleId;
-    const result = await verifyWeaponOwnership({
-      guild,
-      robloxUsername: parsed.killerUsername,
-      weaponRoleId: roleIdToVerify,
-      memberPrefix: config.guildMemberPrefix
-    });
+    const result = parsed.weapon === "M9" || parsed.weapon === "COLT"
+      ? await verifyWeaponOwnership({
+          guild,
+          robloxUsername: parsed.killerUsername,
+          weaponRoleId: parsed.weapon === "COLT" ? COLT_ROLE_ID : config.m9RoleId,
+          memberPrefix: config.guildMemberPrefix
+        })
+      : {
+          allowed: true,
+          reason: "non_role_weapon_not_enforced"
+        };
 
     if (config.debugKillLogs) {
       console.log("[KILLLOG RESULT]", JSON.stringify({
@@ -3753,17 +3810,21 @@ async function handleWeaponEventWebhook(payload = {}) {
   const weaponEvent = extractWeaponEventPayload(payload);
   const robloxUsername = extractWebhookRobloxUsername(payload) || weaponEvent.robloxUsername;
   const weaponCode = normalizeWeaponCode(weaponEvent.weaponCode);
-  if (!robloxUsername || (weaponCode !== "M9" && weaponCode !== "COLT")) {
+  if (!robloxUsername) {
     return false;
   }
 
-  const roleIdToVerify = weaponCode === "COLT" ? COLT_ROLE_ID : config.m9RoleId;
-  const result = await verifyWeaponOwnership({
-    guild,
-    robloxUsername,
-    weaponRoleId: roleIdToVerify,
-    memberPrefix: config.guildMemberPrefix
-  });
+  const result = weaponCode === "M9" || weaponCode === "COLT"
+    ? await verifyWeaponOwnership({
+        guild,
+        robloxUsername,
+        weaponRoleId: weaponCode === "COLT" ? COLT_ROLE_ID : config.m9RoleId,
+        memberPrefix: config.guildMemberPrefix
+      })
+    : {
+        allowed: true,
+        reason: "non_role_weapon_not_enforced"
+      };
 
   await sendWeaponEnforcementAudit({
     sourceLabel: "event_webhook_weapon",
@@ -10200,27 +10261,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const refreshedAccount = refreshCraftingProgress(interaction.user.id);
-      const updated = await safelyUpdateInteraction(interaction, {
-        embeds: [
-          action === "view_my_weapons"
-            ? buildOwnedWeaponsEmbed(refreshedAccount || account)
-            : buildWeaponsInfoEmbed(refreshedAccount || account)
-        ],
-        components: [createWeaponsInfoMenu()]
-      });
-      if (!updated) {
+      const deferred = await safelyDeferReply(interaction, { ephemeral: true });
+      if (!deferred) {
         return;
       }
 
       if (action === "view_my_weapons") {
+        const refreshedAccount = refreshCraftingProgress(interaction.user.id) || account;
+        await interaction.editReply({
+          embeds: [buildOwnedWeaponsEmbed(refreshedAccount)]
+        });
         return;
       }
 
-      await interaction.followUp({
-        content: "الخدمة المطلوبة غير معروفة.",
-        ephemeral: true
-      }).catch(() => null);
+      await interaction.editReply({ content: "الخدمة المطلوبة غير معروفة." });
       return;
     }
 
