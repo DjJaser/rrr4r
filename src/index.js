@@ -3462,7 +3462,7 @@ function buildOwnedWeaponsEmbed(account) {
     .setTitle("🔫 أسلحتك الحالية")
     .setDescription([
       entries.length
-        ? entries.map((entry) => `• **${entry.code}** — ${buildWeaponStatusText(entry)}`).join("\n")
+        ? entries.map((entry) => `• **${entry.weaponLabel}** — \`${entry.code}\` — ${buildWeaponStatusText(entry)}`).join("\n")
         : "**لا تملك أي أسلحة حاليًا.**",
       "",
       `**📦 إجمالي عدد الأسلحة:** ${entries.length}`
