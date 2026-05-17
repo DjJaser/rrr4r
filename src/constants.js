@@ -60,7 +60,7 @@ export const CRAFTING_LEVEL2_ACCESS_ROLE_ID = "1501899632228307074";
 export const WEAPON_INVENTORY_DEFINITIONS = {
   m9: { key: "m9", label: "M9", codePrefix: "M9", roleId: null },
   colt: { key: "colt", label: "Colt", codePrefix: "COLT", roleId: COLT_ROLE_ID },
-  tec9: { key: "tec9", label: "Tec-9", codePrefix: "TEC9", roleId: null },
+  tec9: { key: "tec9", label: "Tec-9", codePrefix: "TEC", roleId: null },
   colt_python: { key: "colt_python", label: "COLT PYTHON", codePrefix: "PYTHON", roleId: null },
   kriss_vector: { key: "kriss_vector", label: "KRISS VECTOR", codePrefix: "KRISS", roleId: null },
   ak: { key: "ak", label: "AK", codePrefix: "AK", roleId: null },
@@ -147,7 +147,7 @@ export const CRAFTABLE_WEAPONS = {
     },
     levels: ["level2upgraded"],
     roleId: null,
-    permanent: true
+    permanent: false
   },
   colt_python: {
     key: "colt_python",
@@ -164,7 +164,7 @@ export const CRAFTABLE_WEAPONS = {
     },
     levels: ["level2upgraded"],
     roleId: null,
-    permanent: true
+    permanent: false
   },
   kriss_vector: {
     key: "kriss_vector",
@@ -181,7 +181,7 @@ export const CRAFTABLE_WEAPONS = {
     },
     levels: ["level2upgraded"],
     roleId: null,
-    permanent: true
+    permanent: false
   },
   ak: {
     key: "ak",
@@ -198,7 +198,7 @@ export const CRAFTABLE_WEAPONS = {
     },
     levels: ["level3"],
     roleId: null,
-    permanent: true
+    permanent: false
   },
   lmt_li29a1: {
     key: "lmt_li29a1",
@@ -215,7 +215,7 @@ export const CRAFTABLE_WEAPONS = {
     },
     levels: ["level3"],
     roleId: null,
-    permanent: true
+    permanent: false
   }
 };
 
