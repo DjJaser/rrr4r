@@ -50,6 +50,7 @@ const commands = [
         .addChoices(
           { name: "المستوى الأول", value: "level1" },
           { name: "المستوى الثاني", value: "level2" },
+          { name: "المستوى الثاني المطور", value: "level2upgraded" },
           { name: "المستوى الثالث", value: "level3" }
         )
     ),
@@ -246,7 +247,12 @@ const commands = [
         .setRequired(true)
         .addChoices(
           { name: "M9", value: "m9" },
-          { name: "Colt", value: "colt" }
+          { name: "Colt", value: "colt" },
+          { name: "Tec-9", value: "tec9" },
+          { name: "COLT PYTHON", value: "colt_python" },
+          { name: "KRISS VECTOR", value: "kriss_vector" },
+          { name: "AK", value: "ak" },
+          { name: "LMT Li29A1", value: "lmt_li29a1" }
         )
     )
     .addStringOption((option) =>
@@ -373,6 +379,7 @@ const commands = [
   new SlashCommandBuilder().setName("ايمبد-المعلومات").setDescription("يعرض لوحة معلومات وممتلكات الأسلحة"),
   new SlashCommandBuilder().setName("activite").setDescription("عرض واجهة التفعيل داخل عرب وورلد")
 ,
+  new SlashCommandBuilder().setName("رمز-الموقع").setDescription("يعرض آخر رمز تحقق نشط للموقع بشكل خاص"),
   new SlashCommandBuilder()
     .setName("ادخال-فويس")
     .setDescription("إدخال البوت إلى روم فويس محدد وإبقاؤه داخله")
