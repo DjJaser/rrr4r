@@ -3174,7 +3174,12 @@ function parseWeaponInventoryCode(value) {
 
 function getAllWeaponInventoryEntries(account) {
   const entries = [];
-  for (const weaponKey of Object.keys(WEAPON_INVENTORY_DEFINITIONS)) {
+  const knownWeaponKeys = new Set([
+    ...Object.keys(WEAPON_INVENTORY_DEFINITIONS),
+    ...Object.keys(account?.weapons || {})
+  ]);
+
+  for (const weaponKey of knownWeaponKeys) {
     const items = getWeaponInventory(account, weaponKey);
     items.forEach((entry, index) => {
       entries.push({
