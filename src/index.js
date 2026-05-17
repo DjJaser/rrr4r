@@ -10200,19 +10200,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const deferred = await safelyDeferReply(interaction, { ephemeral: true });
-      if (!deferred) {
+      const refreshedAccount = refreshCraftingProgress(interaction.user.id);
+      const updated = await safelyUpdateInteraction(interaction, {
+        embeds: [
+          action === "view_my_weapons"
+            ? buildOwnedWeaponsEmbed(refreshedAccount || account)
+            : buildWeaponsInfoEmbed(refreshedAccount || account)
+        ],
+        components: [createWeaponsInfoMenu()]
+      });
+      if (!updated) {
         return;
       }
 
       if (action === "view_my_weapons") {
-        await interaction.editReply({
-          embeds: [buildOwnedWeaponsEmbed(account)]
-        });
         return;
       }
 
-      await interaction.editReply({ content: "الخدمة المطلوبة غير معروفة." });
+      await interaction.followUp({
+        content: "الخدمة المطلوبة غير معروفة.",
+        ephemeral: true
+      }).catch(() => null);
       return;
     }
 
@@ -10485,6 +10493,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        const previousQuestionId = activeResourceMiniGamesByUser.get(interaction.user.id);
+        if (previousQuestionId && !activeResourceMiniGames.has(previousQuestionId)) {
+          activeResourceMiniGamesByUser.delete(interaction.user.id);
+        }
+
         const questionId = `${interaction.user.id}_${Date.now()}`;
         const session = buildResourceMiniGameSession(interaction.user.id);
         const question = session.questions[0];
@@ -10570,7 +10583,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
           return;
         }
-        await interaction.reply({ content: "انتهت صلاحية هذا التحدي.", ephemeral: true });
+
+        const cleared = await safelyUpdateInteraction(interaction, {
+          content: "انتهت صلاحية هذا التحدي. ابدأ ميني قيم جديدة من قائمة الموارد.",
+          embeds: [],
+          components: []
+        });
+        if (!cleared) {
+          await interaction.reply({
+            content: "انتهت صلاحية هذا التحدي. ابدأ ميني قيم جديدة من قائمة الموارد.",
+            ephemeral: true
+          }).catch(() => null);
+        }
         return;
       }
 
