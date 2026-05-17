@@ -1453,7 +1453,7 @@ function buildActivationAcceptedEmbed({ reviewerId, applicantId, request, avatar
       { name: "👤 المواطن", value: `**<@${applicantId}>**`, inline: true },
       { name: "🎮 يوزر روبلوكس", value: `**${request.robloxUsername}**`, inline: true },
       { name: "🧑‍⚖️ تمت المراجعة بواسطة", value: `**<@${reviewerId}>**`, inline: true },
-      { name: "🛡️ الحالة", value: `**تم إعطاء رتبة التفعيل <@&${ACTIVATION_ROLE_ID}> بنجاح.**`, inline: false }
+      { name: "🛡️ الحالة", value: "**تم اعتماد التفعيل بنجاح داخل النظام.**", inline: false }
     )
     .setFooter({ text: "AW , ARAB WORLD • Activation Accepted" })
     .setTimestamp();
@@ -1490,7 +1490,7 @@ function buildActivationAcceptedDmEmbed({ request, reviewerId, avatarUrl = "" })
   const embed = new EmbedBuilder()
     .setColor(0x1f8b4c)
     .setTitle("🎉 تم قبولك في عرب وورلد")
-    .setDescription("**تم قبول طلب تفعيلك بنجاح، وتم منحك رتبة التفعيل داخل السيرفر.**")
+    .setDescription("**تم قبول طلب تفعيلك بنجاح وأصبحت مفعّلًا داخل عرب وورلد.**")
     .addFields(
       { name: "📛 الاسم", value: `**${request.fullName}**`, inline: true },
       { name: "🎮 يوزر روبلوكس", value: `**${request.robloxUsername}**`, inline: true },
@@ -5929,6 +5929,19 @@ function buildCraftingHomeEmbed(account) {
     .setTimestamp());
 }
 
+function formatCraftingWeaponRequirementSummary(weapon) {
+  const resourceSummary = Object.entries(weapon?.resources || {})
+    .filter(([, amount]) => Number(amount || 0) > 0)
+    .map(([resourceKey, amount]) => `${RESOURCE_CATALOG[resourceKey]?.label || resourceKey}: ${Number(amount).toLocaleString("en-US")}`)
+    .join(" • ");
+
+  return [
+    `• **${weapon.label}**`,
+    `سعر التصنيع: **${weapon.cash.toLocaleString("en-US")} ريال**`,
+    resourceSummary ? `المتطلبات: **${resourceSummary}**` : "المتطلبات: **لا توجد**"
+  ].join("\n");
+}
+
 function buildCraftingLevelEmbed(levelKey, account) {
   const level = CRAFTING_TABLE_LEVELS[levelKey];
   const currentLevel = Number(account?.crafting?.tableLevel || 0);
@@ -5936,6 +5949,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
   const level2UpgradeStage = account?.crafting?.level2Upgrade?.stage || "idle";
   const level3QuestStage = account?.crafting?.level3Quest?.stage || "idle";
   const level3WaitingUntil = account?.crafting?.level3Quest?.waitingUntil || null;
+  const hasUpgradedLevel2 = hasLevel2UpgradedCraftingAccess(account);
 
   if (levelKey === "level1" && currentLevel >= 1) {
     const availableWeapons = getCraftingWeaponsForLevel(levelKey);
@@ -5969,7 +5983,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
         "",
         "**🔷 تطوير الطاولة:**",
         `• السعر: **${CRAFTING_TABLE_LEVELS.level2upgraded.price.toLocaleString("en-US")} ريال**`,
-        level2UpgradeStage === "completed"
+        hasUpgradedLevel2
           ? "• الحالة: **تم التطوير بالفعل**"
           : level2UpgradeStage === "puzzle_sent"
             ? "• الحالة: **تم إرسال اللغز إلى الخاص**"
@@ -5980,7 +5994,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
   }
 
   if (levelKey === "level2upgraded") {
-    if (level2UpgradeStage === "completed") {
+    if (hasUpgradedLevel2) {
       const availableWeapons = getCraftingWeaponsForLevel(levelKey);
       return applyCraftingImage(new EmbedBuilder()
         .setColor(0x0c1f3f)
@@ -5988,11 +6002,13 @@ function buildCraftingLevelEmbed(levelKey, account) {
         .setDescription([
           "**تم تطوير الطاولة بنجاح.**",
           "",
-          ...availableWeapons.map((weapon) => `• ${weapon.label}: ${weapon.cash.toLocaleString("en-US")} ريال + الموارد المطلوبة`),
+          "**🔫 الأسلحة الجديدة المتاحة:**",
+          ...availableWeapons.map((weapon) => formatCraftingWeaponRequirementSummary(weapon)),
           "",
           "**📉 ملاحظة الجودة:** أسلحة هذا المستوى مؤقتة، وكل **4 قتلات** تنقص **1%** من الجودة.",
           "",
-          "**هذا المستوى يفتح لك ملف المستوى الثالث.**"
+          "**هذا المستوى يفتح لك ملف المستوى الثالث.**",
+          "**استخدم المنيو بالأسفل لاختيار السلاح ثم عرض متطلباته التفصيلية وتصنيعه.**"
         ].join("\n"))
         .setFooter({ text: "Arab World • المستوى الثاني المطور" })
         .setTimestamp());
@@ -7648,7 +7664,9 @@ async function handleCraftingDmMessage(message) {
     if (!result.ok) {
       if (result.error === "insufficient_balance") {
         await message.reply("رصيدك البنكي لم يعد يكفي لتطوير الطاولة. اشحن رصيدك ثم ابدأ التطوير من جديد.");
+        return;
       }
+      await message.reply("لا يوجد ملف تطوير مفتوح لك حاليًا.");
       return;
     }
 
@@ -7666,6 +7684,7 @@ async function handleCraftingDmMessage(message) {
 
     const result = await finalizeCraftingLevel3Start(userId);
     if (!result.ok) {
+      await message.reply("لا يوجد ملف مستوى ثالث مفتوح لك حاليًا.");
       return;
     }
 
@@ -7696,6 +7715,20 @@ async function handleCraftingDmMessage(message) {
   }
 
   if (isNumericDmMessage && (level3QuestStage === "waiting" || level3QuestStage === "completed" || level3QuestStage === "idle")) {
+    return;
+  }
+
+  if (level2UpgradeStage === "puzzle_sent") {
+    await message.reply(isNumericDmMessage
+      ? "الرقم غير صحيح. راجع قصة جونز مارك ثم أعد الإرسال."
+      : "أرسل الرقم النهائي فقط بالأرقام هنا في الخاص.");
+    return;
+  }
+
+  if (level3QuestStage === "puzzle_sent") {
+    await message.reply(isNumericDmMessage
+      ? "الرمز غير صحيح. راجع المخطوطة جيدًا ثم أعد الإرسال."
+      : "أرسل الرمز النهائي فقط بالأرقام هنا في الخاص.");
     return;
   }
 
@@ -7803,7 +7836,24 @@ function hasCraftingTable(account, level = 1) {
 }
 
 function hasLevel2UpgradedCraftingAccess(account) {
-  return account?.crafting?.level2Upgrade?.stage === "completed";
+  if (!account) {
+    return false;
+  }
+
+  if (account?.crafting?.level2Upgrade?.stage === "completed") {
+    return true;
+  }
+
+  if (Number(account?.crafting?.tableLevel || 0) >= 3) {
+    return true;
+  }
+
+  const level3Stage = account?.crafting?.level3Quest?.stage || "idle";
+  if (["puzzle_sent", "waiting", "completed"].includes(level3Stage)) {
+    return true;
+  }
+
+  return ["tec9", "colt_python", "kriss_vector"].some((weaponKey) => getWeaponInventory(account, weaponKey).length > 0);
 }
 
 function hasLevel3CraftingAccess(account) {
@@ -10338,7 +10388,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (weaponKey === "upgrade_level2") {
         await interaction.editReply({
           embeds: [buildCraftingLevelEmbed("level2upgraded", account)],
-          components: [buildCraftingLevel2UpgradeButtons()],
+          components: [hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu("level2upgraded") : buildCraftingLevel2UpgradeButtons()],
           files: getCraftingImageFiles()
         });
         return;
@@ -11164,8 +11214,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.customId.startsWith("activation_accept:") || interaction.customId.startsWith("activation_reject:")) {
-        if (!canUseSlashCommands(interaction.member)) {
-          await safelyReply(interaction, { content: `هذا الزر متاح فقط لمن يملك الرتبة <@&${config.slashAccessRoleId}>.`, ephemeral: true });
+        if (!memberHasRoleById(interaction.member, ACTIVATION_REVIEW_PING_ROLE_ID)) {
+          await safelyReply(interaction, { content: `هذا الزر متاح فقط لمن يملك الرتبة <@&${ACTIVATION_REVIEW_PING_ROLE_ID}>.`, ephemeral: true });
           return;
         }
 
@@ -11188,11 +11238,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (action === "activation_accept") {
-          if (guildMember.roles.cache.has(ACTIVATION_ROLE_ID)) {
-            await interaction.followUp({ content: "هذا الشخص مفعّل بالفعل، ولن يتم تنفيذ أي شيء جديد.", ephemeral: true }).catch(() => null);
-            return;
-          }
-
           await guildMember.roles.add(ACTIVATION_ROLE_ID).catch(() => null);
           await guildMember.setNickname(`AW | ${request.robloxUsername}`.slice(0, 32)).catch(() => null);
           await interaction.editReply({
@@ -12141,7 +12186,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (hasLevel2UpgradedCraftingAccess(account)) {
-          await interaction.editReply({ content: "أنت تملك المستوى الثاني المطور بالفعل." });
+          await interaction.editReply({
+            content: "أنت تملك المستوى الثاني المطور بالفعل.",
+            embeds: [buildCraftingLevelEmbed("level2upgraded", account)],
+            components: [createCraftingWeaponMenu("level2upgraded")],
+            files: getCraftingImageFiles()
+          });
           return;
         }
 
