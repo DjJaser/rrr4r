@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CITIZEN_VEHICLE_NAMES, DEFAULT_FREE_VEHICLE_NAMES } from "../constants.js";
+import { CITIZEN_VEHICLE_NAMES, DEFAULT_FREE_VEHICLE_NAMES, WEAPON_INVENTORY_DEFINITIONS } from "../constants.js";
 import { BUDGET_DEFINITIONS } from "../budget-system.js";
 
 const configuredDataDir = String(process.env.BOT_DATA_DIR || "").trim();
@@ -37,6 +37,53 @@ const defaultStore = {
 };
 
 let storePathLogged = false;
+
+const WEAPON_STORAGE_ALIASES = {
+  m9: ["M9"],
+  colt: ["COLT"],
+  tec9: ["TEC9", "tec-9", "TEC-9", "Tec-9"],
+  colt_python: ["COLT_PYTHON", "colt-python", "COLT-PYTHON", "python", "PYTHON"],
+  kriss_vector: ["KRISS_VECTOR", "kriss-vector", "KRISS-VECTOR", "kriss", "KRISS"],
+  ak: ["AK"],
+  lmt_li29a1: ["LMT_LI29A1", "lmt-li29a1", "LMT-LI29A1", "lmt", "LMT"]
+};
+
+function normalizeStoredWeaponEntries(value) {
+  if (Array.isArray(value)) {
+    return value.filter((entry) => entry && typeof entry === "object");
+  }
+
+  if (value && typeof value === "object") {
+    return [value];
+  }
+
+  return [];
+}
+
+function migrateWeaponStorage(account) {
+  account.weapons ??= {};
+
+  for (const weaponKey of Object.keys(WEAPON_INVENTORY_DEFINITIONS || {})) {
+    const aliases = Array.from(new Set([weaponKey, ...(WEAPON_STORAGE_ALIASES[weaponKey] || [])]));
+    const mergedEntries = [];
+
+    for (const alias of aliases) {
+      mergedEntries.push(...normalizeStoredWeaponEntries(account.weapons?.[alias]));
+      if (alias !== weaponKey && account.weapons && Object.prototype.hasOwnProperty.call(account.weapons, alias)) {
+        delete account.weapons[alias];
+      }
+
+      if (Object.prototype.hasOwnProperty.call(account, alias)) {
+        mergedEntries.push(...normalizeStoredWeaponEntries(account[alias]));
+        delete account[alias];
+      }
+    }
+
+    if (mergedEntries.length) {
+      account.weapons[weaponKey] = mergedEntries;
+    }
+  }
+}
 
 function isValidStoreShape(store) {
   return Boolean(
@@ -335,6 +382,7 @@ function ensureAccountShape(account) {
   account.resources.sulfur = Number(account.resources.sulfur || 0);
   account.resources.plastic = Number(account.resources.plastic || 0);
   account.weapons ??= {};
+  migrateWeaponStorage(account);
   account.cars ??= {};
   account.crafting ??= {
     tableLevel: 0,
