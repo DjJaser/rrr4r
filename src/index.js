@@ -63,6 +63,7 @@ import {
   CRAFTING_TABLE_LEVELS,
   COLT_ROLE_ID,
   CRAFTING_LEVEL2_ACCESS_ROLE_ID,
+  CRAFTING_LEVEL2_UPGRADED_ROLE_ID,
   CRAFTING_TABLE_IMAGE_URL,
   CRAFTING_WEAPON_IMAGE_DEFINITIONS,
   DEFAULT_CITIZEN_VEHICLE_PRICE,
@@ -6067,7 +6068,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
   const level2UpgradeStage = account?.crafting?.level2Upgrade?.stage || "idle";
   const level3QuestStage = account?.crafting?.level3Quest?.stage || "idle";
   const level3WaitingUntil = account?.crafting?.level3Quest?.waitingUntil || null;
-  const hasUpgradedLevel2 = hasLevel2UpgradedCraftingAccess(account);
+  const hasUpgradedLevel2 = hasLevel2UpgradedOwnership(account);
 
   if (levelKey === "level1" && currentLevel >= 1) {
     const availableWeapons = getCraftingWeaponsForLevel(levelKey);
@@ -6119,6 +6120,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
         .setTitle("🔷 طاولة تصنيع مستوى ثان مطور")
         .setDescription([
           "**تم تطوير الطاولة بنجاح.**",
+          `**🪪 شرط التصنيع:** يجب أن تملك رتبة <@&${CRAFTING_LEVEL2_UPGRADED_ROLE_ID}>.`,
           "",
           "**🔫 الأسلحة الجديدة المتاحة:**",
           ...availableWeapons.map((weapon) => formatCraftingWeaponRequirementSummary(weapon)),
@@ -6140,6 +6142,7 @@ function buildCraftingLevelEmbed(levelKey, account) {
         "",
         "**المتطلبات:**",
         "• امتلاك المستوى الثاني",
+        `• امتلاك رتبة <@&${CRAFTING_LEVEL2_UPGRADED_ROLE_ID}> عند التصنيع`,
         "• حل ملف جونز مارك في الخاص",
         "",
         "**المكافآت:**",
@@ -7178,6 +7181,9 @@ async function finalizeCraftingLevel2UpgradeUnlock(userId) {
   });
 
   const updatedAccount = getAccount(userId);
+  const guild = await client.guilds.fetch(config.guildId).catch(() => null);
+  const member = guild ? await guild.members.fetch(userId).catch(() => null) : null;
+  await member?.roles.add(CRAFTING_LEVEL2_UPGRADED_ROLE_ID).catch(() => null);
   appendTransaction({
     discordUserId: userId,
     robloxUsername: updatedAccount?.robloxUsername,
@@ -7230,6 +7236,10 @@ function buildCraftingLevel2UpgradeUnlockedEmbed() {
     .setColor(0x0c1f3f)
     .setTitle("🔷 تم فتح تطوير الطاولة المستوى الثاني")
     .setDescription("**تطورت الطاولة بنجاح، ويمكنك الآن استخدام طاولة المستوى الثاني المطورة وتصنيع الأسلحة الجديدة.**")
+    .addFields(
+      { name: "🪪 الرتبة المطلوبة", value: `<@&${CRAFTING_LEVEL2_UPGRADED_ROLE_ID}>`, inline: true },
+      { name: "🔓 الأسلحة", value: "**Tec-9 • COLT PYTHON • KRISS VECTOR**", inline: false }
+    )
     .setFooter({ text: "Arab World • المستوى الثاني المطور" })
     .setTimestamp();
 }
@@ -7953,7 +7963,11 @@ function hasCraftingTable(account, level = 1) {
   return Number(account?.crafting?.tableLevel || 0) >= level;
 }
 
-function hasLevel2UpgradedCraftingAccess(account) {
+function hasLevel2UpgradedRole(member) {
+  return Boolean(member?.roles?.cache?.has(CRAFTING_LEVEL2_UPGRADED_ROLE_ID));
+}
+
+function hasLevel2UpgradedOwnership(account) {
   if (!account) {
     return false;
   }
@@ -7972,6 +7986,10 @@ function hasLevel2UpgradedCraftingAccess(account) {
   }
 
   return ["tec9", "colt_python", "kriss_vector"].some((weaponKey) => getWeaponInventory(account, weaponKey).length > 0);
+}
+
+function hasLevel2UpgradedCraftingAccess(account, member = null) {
+  return hasLevel2UpgradedRole(member);
 }
 
 function hasLevel3CraftingAccess(account) {
@@ -9239,10 +9257,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
           }
 
-          components.push(hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons());
+          components.push(hasLevel2UpgradedCraftingAccess(account, interaction.member) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons());
         }
         if (levelKey === CRAFTING_TABLE_LEVELS.level3.key) {
-          if (!hasLevel2UpgradedCraftingAccess(account)) {
+          if (!hasLevel2UpgradedCraftingAccess(account, interaction.member)) {
             await interaction.reply({
               content: "لا يمكنك فتح المستوى الثالث قبل امتلاك المستوى الثاني المطور.",
               ephemeral: true
@@ -10423,14 +10441,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.editReply({
           embeds: [buildCraftingLevelEmbed(levelKey, account)],
-          components: [hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons()],
+          components: [hasLevel2UpgradedCraftingAccess(account, interaction.member) ? createCraftingWeaponMenu(levelKey) : buildCraftingLevel2UpgradeButtons()],
           files: getCraftingImageFiles()
         });
         return;
       }
 
       if (levelKey === CRAFTING_TABLE_LEVELS.level3.key) {
-        if (!hasLevel2UpgradedCraftingAccess(account)) {
+        if (!hasLevel2UpgradedCraftingAccess(account, interaction.member)) {
           await interaction.editReply({ content: "لا يمكنك الوصول للمستوى الثالث قبل امتلاك المستوى الثاني المطور." });
           return;
         }
@@ -10479,7 +10497,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const hasAccess = levelKey === "level2"
         ? hasLevel2CraftingAccess(interaction.member, account)
         : levelKey === "level2upgraded"
-          ? hasLevel2UpgradedCraftingAccess(account)
+          ? hasLevel2UpgradedCraftingAccess(account, interaction.member)
           : levelKey === "level3"
             ? hasLevel3CraftingAccess(account)
             : (hasCraftingTable(account, 1) || hasLevel1Role);
@@ -10488,7 +10506,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           content: levelKey === "level2"
             ? "أنت لا تملك صلاحية الوصول إلى طاولة المستوى الثاني."
             : levelKey === "level2upgraded"
-              ? "أنت لا تملك المستوى الثاني المطور."
+              ? `أنت لا تملك رتبة المستوى الثاني المطور <@&${CRAFTING_LEVEL2_UPGRADED_ROLE_ID}>.`
               : levelKey === "level3"
                 ? "أنت لا تملك طاولة المستوى الثالث."
                 : "أنت لا تملك طاولة تصنيع مستوى أول أو رتبة الوصول الخاصة بها."
@@ -10509,7 +10527,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (weaponKey === "upgrade_level2") {
         await interaction.editReply({
           embeds: [buildCraftingLevelEmbed("level2upgraded", account)],
-          components: [hasLevel2UpgradedCraftingAccess(account) ? createCraftingWeaponMenu("level2upgraded") : buildCraftingLevel2UpgradeButtons()],
+          components: [hasLevel2UpgradedCraftingAccess(account, interaction.member) ? createCraftingWeaponMenu("level2upgraded") : buildCraftingLevel2UpgradeButtons()],
           files: getCraftingImageFiles()
         });
         return;
@@ -11994,7 +12012,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (hasLevel2CraftingAccess(interaction.member, account) || hasLevel2Role) {
           availableLevels.push("level2");
         }
-        if (hasLevel2UpgradedCraftingAccess(account)) {
+        if (hasLevel2UpgradedCraftingAccess(account, interaction.member)) {
           availableLevels.push("level2upgraded");
         }
         if (hasLevel3CraftingAccess(account)) {
@@ -12206,8 +12224,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (hasLevel2CraftingAccess(interaction.member, account)) {
-          await interaction.editReply({ content: "أنت تملك الوصول إلى المستوى الثاني بالفعل." });
+        if (
+          hasLevel2CraftingAccess(interaction.member, account)
+          || hasLevel2UpgradedOwnership(account)
+          || hasLevel2UpgradedRole(interaction.member)
+        ) {
+          await interaction.editReply({ content: "أنت تملك طاولة المستوى الثاني بالفعل، ولا يمكنك استخراجها مرة أخرى." });
           return;
         }
 
@@ -12322,11 +12344,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (hasLevel2UpgradedCraftingAccess(account)) {
+        if (hasLevel2UpgradedCraftingAccess(account, interaction.member) || hasLevel2UpgradedOwnership(account)) {
           await interaction.editReply({
             content: "أنت تملك المستوى الثاني المطور بالفعل.",
             embeds: [buildCraftingLevelEmbed("level2upgraded", account)],
-            components: [createCraftingWeaponMenu("level2upgraded")],
+            components: [hasLevel2UpgradedCraftingAccess(account, interaction.member) ? createCraftingWeaponMenu("level2upgraded") : buildCraftingLevel2UpgradeButtons()],
             files: getCraftingImageFiles()
           });
           return;
@@ -12375,7 +12397,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const account = refreshCraftingProgress(interaction.user.id);
-        if (!account || !hasLevel2UpgradedCraftingAccess(account)) {
+        if (!account || !hasLevel2UpgradedCraftingAccess(account, interaction.member)) {
           await interaction.editReply({ content: "يجب أن تمتلك المستوى الثاني المطور قبل ملف المستوى الثالث." });
           return;
         }
