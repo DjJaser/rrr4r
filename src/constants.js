@@ -57,6 +57,7 @@ export const CRAFTING_LEVEL1_M9_REQUIREMENTS = {
 
 export const COLT_ROLE_ID = "1496139911726760118";
 export const CRAFTING_LEVEL2_ACCESS_ROLE_ID = "1501899632228307074";
+export const CRAFTING_LEVEL2_UPGRADED_ROLE_ID = "1505775627704471764";
 export const WEAPON_INVENTORY_DEFINITIONS = {
   m9: { key: "m9", label: "M9", codePrefix: "M9", roleId: null },
   colt: { key: "colt", label: "Colt", codePrefix: "COLT", roleId: COLT_ROLE_ID },
